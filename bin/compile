@@ -148,21 +148,27 @@ fi
 
 echo "✓ PHP ${PHP_VERSION} CLI downloaded"
 
-# Create symlinks for version mismatches (e.g., PHP built against libxml2.so.2 but system has libxml2.so.16)
-echo "Linking system libraries for PHP compatibility..."
+# Copy/link system libraries for compatibility
+echo "Setting up library compatibility layer..."
 mkdir -p "$INSTALL_DIR/lib"
 
-# Link common library version mismatches
-for lib_name in libxml2 libssl libcrypto; do
-    # Find what versions the system has
-    for lib_path in /usr/lib/x86_64-linux-gnu/${lib_name}.so*; do
-        if [ -f "$lib_path" ]; then
-            lib_basename=$(basename "$lib_path")
-            # Create symlink in our lib directory
-            ln -sf "$lib_path" "$INSTALL_DIR/lib/$lib_basename" 2>/dev/null || true
-        fi
-    done
+# Copy system libraries that PHP might need
+# The buildpack environment has these but PHP binary might have been compiled against different versions
+for lib_path in /usr/lib/x86_64-linux-gnu/libxml2.so* /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/libcrypto.so*; do
+    if [ -e "$lib_path" ]; then
+        lib_name=$(basename "$lib_path")
+        cp -P "$lib_path" "$INSTALL_DIR/lib/$lib_name" 2>/dev/null || true
+    fi
 done
+
+# Explicitly copy libxml2.so.16 as libxml2.so.2 (version compatibility)
+if [ -f "/usr/lib/x86_64-linux-gnu/libxml2.so.16" ]; then
+    cp "/usr/lib/x86_64-linux-gnu/libxml2.so.16" "$INSTALL_DIR/lib/libxml2.so.2" 2>/dev/null || true
+fi
+
+# List what we copied for debugging
+echo "Libraries in compatibility layer:"
+ls -1 "$INSTALL_DIR/lib/" 2>/dev/null | head -10 || echo "  (none)"
 
 # Verify PHP works (with library path set)
 export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$LD_LIBRARY_PATH"
