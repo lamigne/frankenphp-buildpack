@@ -153,7 +153,7 @@ echo "Setting up library compatibility layer..."
 mkdir -p "$INSTALL_DIR/lib"
 
 # Download libxml2 from Ubuntu Jammy repository
-echo "Downloading libxml2 from Ubuntu Jammy repository..."
+echo "Attempting to download libxml2 from Ubuntu Jammy repository..."
 UBUNTU_REPO="http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/"
 
 if curl -fsSL "${UBUNTU_REPO}Packages.xz" 2>/dev/null | xz -d 2>/dev/null | grep -A 8 "^Package: libxml2$" > /tmp/libxml2-info.txt 2>/dev/null; then
@@ -166,16 +166,17 @@ if curl -fsSL "${UBUNTU_REPO}Packages.xz" 2>/dev/null | xz -d 2>/dev/null | grep
             echo "  Found: $libxml2_file"
             if curl -fsSL "$libxml2_url" -o "/tmp/$libxml2_file"; then
                 mkdir -p /tmp/libxml2-extracted
-                dpkg -x "/tmp/$libxml2_file" /tmp/libxml2-extracted 2>/dev/null || true
-                if [ -d "/tmp/libxml2-extracted/usr/lib" ]; then
-                    find /tmp/libxml2-extracted/usr/lib -name "libxml2.so*" -type f -o -type l | while read lib; do
-                        cp -P "$lib" "$INSTALL_DIR/lib/" 2>/dev/null || true
-                    done
-                    echo "  ✓ Libxml2 extracted"
+                if dpkg -x "/tmp/$libxml2_file" /tmp/libxml2-extracted 2>/dev/null; then
+                    if [ -d "/tmp/libxml2-extracted/usr/lib" ]; then
+                        cp -r /tmp/libxml2-extracted/usr/lib/x86_64-linux-gnu/libxml2* "$INSTALL_DIR/lib/" 2>/dev/null || true
+                        echo "  ✓ Libxml2 extracted"
+                    fi
                 fi
             fi
         fi
     fi
+else
+    echo "  Warning: Could not fetch Ubuntu Jammy package list"
 fi
 
 # Also copy other system libraries we might need
