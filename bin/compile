@@ -107,7 +107,7 @@ if ! curl -fsSL "$PHP_DEB_URL" -o "$PHP_DEB_DIR/${PHP_DEB}"; then
     exit 1
 fi
 
-# Extract PHP .deb
+# Extract PHP .deb (full extraction for libraries)
 echo "-----> Installing PHP ${PHP_VERSION} CLI..."
 cd "$PHP_DEB_DIR"
 
@@ -130,9 +130,19 @@ else
     exit 1
 fi
 
-# Verify PHP works
+# Copy PHP libraries from extracted package
+if [ -d "php-cli-root/usr/lib" ]; then
+    mkdir -p "$INSTALL_DIR/lib"
+    cp -r php-cli-root/usr/lib/* "$INSTALL_DIR/lib/" 2>/dev/null || true
+fi
+
+# Verify PHP works (with library path set)
+export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$LD_LIBRARY_PATH"
 if ! "$PHP_BIN" -v > /dev/null 2>&1; then
     echo "ERROR: PHP binary verification failed"
+    echo "Debug: checking binary and libraries..."
+    file "$PHP_BIN"
+    ldd "$PHP_BIN" 2>&1 || true
     exit 1
 fi
 
@@ -155,6 +165,7 @@ if [ -f "$BUILD_DIR/composer.json" ]; then
 
     cd "$BUILD_DIR"
     export PATH="$INSTALL_DIR:$PATH"
+    export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$LD_LIBRARY_PATH"
 
     if ! "$PHP_BIN" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
         echo "ERROR: Composer install failed"
@@ -167,6 +178,14 @@ fi
 # Create application directories
 mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
 chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
+
+# Create profile.d script to set LD_LIBRARY_PATH at runtime
+mkdir -p /app/.profile.d
+cat > /app/.profile.d/php-libs.sh <<'PROFILE_EOF'
+export LD_LIBRARY_PATH="/app/bin/lib:$LD_LIBRARY_PATH"
+export PATH="/app/bin:$PATH"
+PROFILE_EOF
+chmod +x /app/.profile.d/php-libs.sh
 
 echo "-----> FrankenPHP buildpack complete!"
 exit 0
