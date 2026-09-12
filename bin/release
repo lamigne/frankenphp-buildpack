@@ -2,5 +2,5 @@
 cat <<EOF
 ---
 default_process_types:
-  web: /app/bin/frankenphp run --config /app/Caddyfile
+  web: frankenphp run --config /app/Caddyfile
 EOF

@@ -17,26 +17,48 @@ If your FrankenPHP app has `composer.json`, Scalingo's PHP buildpack claims the 
 
 ## Installation
 
-### 1. Create a `.buildpacks` file in your FrankenPHP app:
+### 1. Create `Aptfile` in your app root
+
+Copy and customize [example.Aptfile](example.Aptfile) to install PHP, Caddy, and dependencies:
+
+```bash
+cp example.Aptfile Aptfile
+# Edit Aptfile to adjust PHP version and extensions as needed
+```
+
+### 2. Create `.buildpacks` file in your app:
 
 ```
+https://github.com/scalingo/buildpack-apt
 https://github.com/YOUR_USERNAME/frankenphp-buildpack
 ```
 
-### 2. Commit and deploy:
+**Important:** Order matters! apt buildpack must come **before** FrankenPHP buildpack.
+
+### 3. Commit and deploy:
 
 ```bash
-git add .buildpacks
-git commit -m "Use FrankenPHP buildpack"
+git add .buildpacks Aptfile
+git commit -m "Use APT + FrankenPHP buildpacks"
 git push scalingo main
 ```
 
 ## How It Works
 
-The buildpack consists of three scripts:
+### Multi-Buildpack Approach
 
-- **`bin/detect`** — Returns 0 if `Dockerfile` exists, preventing PHP buildpack from running
-- **`bin/compile`** — No-op script (Scalingo's Docker builder handles compilation)
+1. **APT Buildpack** (runs first)
+   - Installs system packages from `Aptfile` (PHP, Caddy, Composer, etc.)
+
+2. **FrankenPHP Buildpack** (runs second)
+   - Detects FrankenPHP project (has `Caddyfile`)
+   - Installs PHP dependencies via Composer
+   - Prepares the application
+
+### FrankenPHP Buildpack Scripts
+
+- **`bin/detect`** — Returns 0 if `Caddyfile` exists
+- **`bin/compile`** — Installs composer dependencies, prepares app directories
 - **`bin/release`** — Specifies the default web process: `frankenphp run --config /app/Caddyfile`
 
 ## Typical Project Structure
@@ -45,26 +67,13 @@ Your FrankenPHP app should have:
 
 ```
 your-app/
-├── Dockerfile           # Your FrankenPHP image
-├── Caddyfile           # Caddy configuration
+├── Caddyfile           # Caddy configuration (required)
 ├── public/             # Web root
 ├── app/                # Your PHP code
-├── .buildpacks         # Points to this buildpack
-└── composer.json       # PHP dependencies
-```
-
-## Example Dockerfile
-
-```dockerfile
-FROM dunglas/frankenphp:latest
-
-WORKDIR /app
-COPY . /app
-
-RUN composer install --no-dev
-
-EXPOSE 8080
-CMD ["frankenphp", "run", "--config", "/app/Caddyfile"]
+├── composer.json       # PHP dependencies (required)
+├── composer.lock       # Lock file
+├── .buildpacks         # Points to APT + FrankenPHP buildpacks
+└── Aptfile             # System packages to install
 ```
 
 ## Configuration

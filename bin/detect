@@ -3,7 +3,7 @@ set -e
 
 BUILD_DIR=$1
 
-if [[ -f "$BUILD_DIR/Dockerfile" ]]; then
+if [[ -f "$BUILD_DIR/Caddyfile" ]] && [[ -f "$BUILD_DIR/composer.json" ]]; then
     echo "FrankenPHP"
     exit 0
 fi

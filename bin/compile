@@ -8,36 +8,10 @@ ENV_DIR=$3
 cd "$BUILD_DIR"
 
 echo "-----> FrankenPHP Buildpack"
-echo "-----> Installing FrankenPHP binary..."
 
-# Download FrankenPHP static binary
-FRANKENPHP_VERSION="1.2.1"
-FRANKENPHP_URL="https://github.com/dunglas/frankenphp/releases/download/v${FRANKENPHP_VERSION}/frankenphp-${FRANKENPHP_VERSION}-linux-x86_64-musl.tar.gz"
-
-mkdir -p /app/bin
-cd /tmp
-curl -fsSL "$FRANKENPHP_URL" -o frankenphp.tar.gz
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to download FrankenPHP"
-    exit 1
-fi
-
-tar -xzf frankenphp.tar.gz -C /app/bin/
-rm frankenphp.tar.gz
-
-if [ ! -f "/app/bin/frankenphp" ]; then
-    echo "ERROR: FrankenPHP binary not found after extraction"
-    exit 1
-fi
-
-chmod +x /app/bin/frankenphp
-echo "-----> FrankenPHP binary installed successfully"
-
-# Install PHP dependencies
+# Install PHP dependencies via composer
 if [ -f "$BUILD_DIR/composer.json" ]; then
     echo "-----> Installing PHP dependencies..."
-    cd "$BUILD_DIR"
 
     # Download composer if not present
     if [ ! -f "composer.phar" ]; then
@@ -47,9 +21,16 @@ if [ -f "$BUILD_DIR/composer.json" ]; then
     php composer.phar install --no-dev --optimize-autoloader
 
     if [ $? -ne 0 ]; then
-        echo "WARNING: Composer install had issues, but continuing..."
+        echo "ERROR: Composer install failed"
+        exit 1
     fi
+
+    echo "-----> PHP dependencies installed"
 fi
 
-echo "-----> Build complete!"
+# Create required directories
+mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
+chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
+
+echo "-----> FrankenPHP buildpack ready"
 exit 0
