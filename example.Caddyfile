@@ -1,0 +1,32 @@
+# Example Caddyfile for FrankenPHP
+# Copy this to your FrankenPHP app and name it 'Caddyfile'
+
+{
+	admin off
+	log {
+		output stdout
+		format console
+	}
+}
+
+:8080 {
+	root * /app/public
+
+	encode gzip
+
+	# Route all requests to index.php (Laravel example)
+	@notfile {
+		not path /favicon.ico /robots.txt
+		file {
+			try_files {path} /index.php
+		}
+	}
+
+	rewrite @notfile /index.php
+
+	php_fastcgi localhost:9000 {
+		root /app/public
+	}
+
+	file_server
+}

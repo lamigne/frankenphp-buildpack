@@ -1,0 +1,10 @@
+#!/bin/bash
+# Detect if Dockerfile exists - if yes, use this buildpack
+# This prevents PHP buildpack from auto-detecting composer.json
+
+if [[ -f "Dockerfile" ]]; then
+    echo "Docker"
+    exit 0
+fi
+
+exit 1
