@@ -152,18 +152,26 @@ echo "✓ PHP ${PHP_VERSION} CLI downloaded"
 echo "Setting up library compatibility layer..."
 mkdir -p "$INSTALL_DIR/lib"
 
-# Copy system libraries that PHP might need
-# The buildpack environment has these but PHP binary might have been compiled against different versions
+# Dereference symlinks and copy actual library files
 for lib_path in /usr/lib/x86_64-linux-gnu/libxml2.so* /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/libcrypto.so*; do
     if [ -e "$lib_path" ]; then
         lib_name=$(basename "$lib_path")
-        cp -P "$lib_path" "$INSTALL_DIR/lib/$lib_name" 2>/dev/null || true
+        # If it's a symlink, resolve it to the actual file
+        actual_lib=$(readlink -f "$lib_path" 2>/dev/null || echo "$lib_path")
+        if [ -f "$actual_lib" ]; then
+            cp "$actual_lib" "$INSTALL_DIR/lib/$lib_name" 2>/dev/null || true
+        fi
     fi
 done
 
-# Explicitly copy libxml2.so.16 as libxml2.so.2 (version compatibility)
-if [ -f "/usr/lib/x86_64-linux-gnu/libxml2.so.16" ]; then
-    cp "/usr/lib/x86_64-linux-gnu/libxml2.so.16" "$INSTALL_DIR/lib/libxml2.so.2" 2>/dev/null || true
+# For version compatibility: copy the actual libxml2 library file as libxml2.so.2
+# First find the actual library file (not a symlink)
+if [ -d "/usr/lib/x86_64-linux-gnu" ]; then
+    actual_libxml2=$(find /usr/lib/x86_64-linux-gnu -name "libxml2.so*" -type f | head -1)
+    if [ ! -z "$actual_libxml2" ]; then
+        echo "Copying actual libxml2 library: $actual_libxml2"
+        cp "$actual_libxml2" "$INSTALL_DIR/lib/libxml2.so.2" 2>/dev/null || true
+    fi
 fi
 
 # List what we copied for debugging
