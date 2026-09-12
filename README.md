@@ -15,8 +15,6 @@ This buildpack provides a complete, self-contained FrankenPHP deployment solutio
 
 ### 1. Create `.buildpacks` file in your app:
 
-Copy [example.buildpacks](example.buildpacks):
-
 ```
 https://github.com/YOUR_USERNAME/frankenphp-buildpack
 ```
@@ -29,33 +27,42 @@ git commit -m "Use FrankenPHP buildpack"
 git push scalingo main
 ```
 
+That's it! The buildpack automatically:
+- Parses your `composer.json` for PHP version
+- Downloads FrankenPHP binary
+- Downloads PHP CLI from ondrej/php repository
+- Installs Composer
+- Runs `composer install`
+
 ## How It Works
 
-The buildpack is completely self-contained with three scripts:
+### Completely Self-Contained
 
-- **`bin/detect`** — Detects FrankenPHP projects (checks for `Caddyfile` + `composer.json`)
-- **`bin/compile`** — 
-  - Detects system architecture (x86_64 / aarch64) and libc type (gnu / musl)
-  - Downloads FrankenPHP binary from GitHub releases (latest)
-  - Downloads Composer (latest stable)
-  - Uses FrankenPHP's built-in PHP to run `composer install --no-dev --optimize-autoloader`
-  - Creates application directories (storage, bootstrap/cache for Laravel)
-- **`bin/release`** — Specifies the default process: `frankenphp run --config /app/Caddyfile`
+The buildpack handles everything without external dependencies:
 
-## Build Process
+1. **Detects FrankenPHP projects** (checks for `Caddyfile` + `composer.json`)
+2. **Parses `composer.json`** for PHP version requirement (e.g., `"php": ">=8.4"`)
+3. **Downloads FrankenPHP binary** from GitHub releases
+4. **Downloads PHP CLI** from ondrej/php repository (matches your PHP version)
+5. **Extracts PHP binary** from .deb package
+6. **Downloads Composer**
+7. **Runs `composer install`** with the PHP version your app needs
+8. **Creates application directories** (storage, bootstrap/cache for Laravel)
 
-When you deploy:
+### Build Process
 
 ```
 git push scalingo main
   ↓
-FrankenPHP Buildpack detects Caddyfile + composer.json
+FrankenPHP Buildpack runs
   ↓
-1. Detect architecture and libc type
-2. Download FrankenPHP binary (latest release)
-3. Download Composer (latest stable)
-4. Run: frankenphp php composer install --no-dev --optimize-autoloader
-5. Setup app directories
+1. Parse composer.json → detect PHP 8.4 needed
+2. Download FrankenPHP binary (latest)
+3. Download PHP 8.4 from ondrej/php
+4. Extract PHP CLI binary
+5. Download Composer
+6. Run: php composer install --no-dev --optimize-autoloader
+7. Setup app directories
   ↓
 Application starts with: frankenphp run --config /app/Caddyfile
 ```

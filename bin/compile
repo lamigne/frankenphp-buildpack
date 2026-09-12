@@ -12,11 +12,16 @@ echo "-----> Installing FrankenPHP and dependencies..."
 
 # Parse composer.json for PHP version
 PHP_VERSION="8.5"
-if [ -f "composer.json" ] && command -v jq >/dev/null 2>&1; then
-    php_requirement=$(jq -r '.require.php // .require."php-x64" // empty' composer.json 2>/dev/null)
+if [ -f "composer.json" ]; then
+    # Try jq first, fall back to grep
+    if command -v jq >/dev/null 2>&1; then
+        php_requirement=$(jq -r '.require.php // empty' composer.json 2>/dev/null)
+    else
+        php_requirement=$(grep -o '"php"[[:space:]]*:[[:space:]]*"[^"]*' composer.json 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+    fi
+
     if [ ! -z "$php_requirement" ]; then
-        # Extract version from constraint like ">=8.4" or "^8.4"
-        extracted_version=$(echo "$php_requirement" | grep -oE '8\.[0-9]+' | head -1)
+        extracted_version=$(echo "$php_requirement" | grep -oE '[89]\.[0-9]+' | head -1)
         if [ ! -z "$extracted_version" ]; then
             PHP_VERSION="$extracted_version"
         fi
@@ -25,13 +30,9 @@ fi
 
 echo "-----> Detected PHP version requirement: $PHP_VERSION"
 
-# Download FrankenPHP
+# Architecture
 ARCH=$(uname -m)
-if [ "$ARCH" = "aarch64" ]; then
-    ARCH="aarch64"
-elif [ "$ARCH" = "x86_64" ]; then
-    ARCH="x86_64"
-else
+if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
     echo "ERROR: Unsupported architecture: $ARCH"
     exit 1
 fi
@@ -42,56 +43,85 @@ else
     LIBC="musl"
 fi
 
-BINARY_NAME="frankenphp-linux-${ARCH}-${LIBC}"
-BINARY_URL="https://github.com/dunglas/frankenphp/releases/latest/download/${BINARY_NAME}"
 INSTALL_DIR="/app/bin"
-
 mkdir -p "$INSTALL_DIR"
 
+# Download FrankenPHP
 echo "-----> Downloading FrankenPHP (${ARCH}-${LIBC})..."
+BINARY_NAME="frankenphp-linux-${ARCH}-${LIBC}"
+BINARY_URL="https://github.com/dunglas/frankenphp/releases/latest/download/${BINARY_NAME}"
+
 if ! curl -fsSL "$BINARY_URL" -o "$INSTALL_DIR/frankenphp"; then
-    echo "ERROR: Failed to download FrankenPHP from $BINARY_URL"
+    echo "ERROR: Failed to download FrankenPHP"
     exit 1
 fi
 
 chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
-# Download PHP CLI from ondrej/php repository
+# Download PHP CLI from ondrej/php using package list
 echo "-----> Downloading PHP ${PHP_VERSION} CLI from ondrej/php..."
-PHP_PKG="php${PHP_VERSION}-cli"
-PHP_DEB_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/${PHP_PKG}_${PHP_VERSION}*_amd64.deb"
+PHP_DEB_DIR="/tmp/php-debs"
+mkdir -p "$PHP_DEB_DIR"
 
-# Try to find and download the latest PHP package
-PHP_DEB=$(curl -s "https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/" | grep -oE "${PHP_PKG}_[^/]*_amd64\.deb" | tail -1)
+# Download package list from ondrej/php repository
+REPO_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/dists/jammy/main/binary-amd64/"
+
+# Get the Packages.gz file and search for php CLI
+if ! curl -fsSL "${REPO_URL}Packages.gz" | gunzip 2>/dev/null | grep -A 10 "Package: php${PHP_VERSION}-cli" > /tmp/php-cli-info.txt; then
+    echo "ERROR: Could not find PHP ${PHP_VERSION}-cli in ondrej/php repository"
+    echo "Trying alternative method..."
+
+    # Alternative: try to download from a known URL pattern
+    curl -fsSL "https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/" 2>/dev/null | grep -oE "php${PHP_VERSION}-cli[^<]*\.deb" | head -1 > /tmp/php-deb-name.txt
+
+    if [ ! -s /tmp/php-deb-name.txt ]; then
+        echo "ERROR: Could not find PHP ${PHP_VERSION} package"
+        exit 1
+    fi
+
+    PHP_DEB=$(cat /tmp/php-deb-name.txt)
+else
+    # Extract filename from package info
+    PHP_DEB=$(grep "Filename:" /tmp/php-cli-info.txt | head -1 | awk '{print $2}' | xargs basename)
+fi
 
 if [ -z "$PHP_DEB" ]; then
-    echo "ERROR: Could not find PHP ${PHP_VERSION} package from ondrej/php"
+    echo "ERROR: Could not determine PHP package filename"
     exit 1
 fi
 
-PHP_DEB_FULL_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/${PHP_DEB}"
+echo "Downloading: $PHP_DEB"
+PHP_DEB_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/${PHP_DEB}"
 
-if ! curl -fsSL "$PHP_DEB_FULL_URL" -o "/tmp/${PHP_DEB}"; then
-    echo "ERROR: Failed to download PHP from ondrej/php"
+if ! curl -fsSL "$PHP_DEB_URL" -o "$PHP_DEB_DIR/${PHP_DEB}"; then
+    echo "ERROR: Failed to download $PHP_DEB"
     exit 1
 fi
 
-# Install PHP .deb
+# Install PHP .deb with minimal dependencies
 echo "-----> Installing PHP ${PHP_VERSION} CLI..."
-if ! dpkg -i "/tmp/${PHP_DEB}" 2>/dev/null; then
-    echo "WARNING: dpkg install had issues, but continuing..."
-fi
+cd "$PHP_DEB_DIR"
 
-rm -f "/tmp/${PHP_DEB}"
-
-# Verify PHP is available
-if ! command -v "php${PHP_VERSION}" >/dev/null 2>&1; then
-    echo "ERROR: PHP ${PHP_VERSION} CLI not found after installation"
+if ! dpkg -x "${PHP_DEB}" php-cli-root 2>/dev/null; then
+    echo "ERROR: Failed to extract PHP package"
     exit 1
 fi
 
-PHP_BIN="php${PHP_VERSION}"
+# Copy PHP CLI to install dir
+if [ -f "php-cli-root/usr/bin/php${PHP_VERSION}" ]; then
+    cp "php-cli-root/usr/bin/php${PHP_VERSION}" "$INSTALL_DIR/php"
+    chmod +x "$INSTALL_DIR/php"
+    PHP_BIN="$INSTALL_DIR/php"
+elif [ -f "php-cli-root/usr/bin/php" ]; then
+    cp "php-cli-root/usr/bin/php" "$INSTALL_DIR/php"
+    chmod +x "$INSTALL_DIR/php"
+    PHP_BIN="$INSTALL_DIR/php"
+else
+    echo "ERROR: PHP binary not found in package"
+    exit 1
+fi
+
 echo "✓ PHP ${PHP_VERSION} CLI installed"
 export PHP_BIN
 
@@ -106,8 +136,11 @@ chmod +x "$INSTALL_DIR/composer"
 echo "✓ Composer installed"
 
 # Install PHP dependencies
-if [ -f "composer.json" ]; then
+if [ -f "$BUILD_DIR/composer.json" ]; then
     echo "-----> Installing PHP dependencies with Composer..."
+
+    cd "$BUILD_DIR"
+    export PATH="$INSTALL_DIR:$PATH"
 
     if ! "$PHP_BIN" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
         echo "ERROR: Composer install failed"
@@ -117,7 +150,7 @@ if [ -f "composer.json" ]; then
     echo "✓ PHP dependencies installed"
 fi
 
-# Create application directories (for Laravel, etc.)
+# Create application directories
 mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
 chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
 
