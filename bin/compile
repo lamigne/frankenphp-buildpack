@@ -10,7 +10,22 @@ cd "$BUILD_DIR"
 echo "-----> FrankenPHP Buildpack"
 echo "-----> Installing FrankenPHP and dependencies..."
 
-# Determine architecture and libc
+# Parse composer.json for PHP version
+PHP_VERSION="8.5"
+if [ -f "composer.json" ] && command -v jq >/dev/null 2>&1; then
+    php_requirement=$(jq -r '.require.php // .require."php-x64" // empty' composer.json 2>/dev/null)
+    if [ ! -z "$php_requirement" ]; then
+        # Extract version from constraint like ">=8.4" or "^8.4"
+        extracted_version=$(echo "$php_requirement" | grep -oE '8\.[0-9]+' | head -1)
+        if [ ! -z "$extracted_version" ]; then
+            PHP_VERSION="$extracted_version"
+        fi
+    fi
+fi
+
+echo "-----> Detected PHP version requirement: $PHP_VERSION"
+
+# Download FrankenPHP
 ARCH=$(uname -m)
 if [ "$ARCH" = "aarch64" ]; then
     ARCH="aarch64"
@@ -21,7 +36,6 @@ else
     exit 1
 fi
 
-# Determine libc (gnu vs musl)
 if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
     LIBC="gnu"
 else
@@ -43,21 +57,45 @@ fi
 chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
-# FrankenPHP includes PHP, so we'll use it as the PHP CLI
-echo "-----> Setting up PHP CLI via FrankenPHP..."
-PHP_BIN="$INSTALL_DIR/frankenphp php"
+# Download PHP CLI from ondrej/php repository
+echo "-----> Downloading PHP ${PHP_VERSION} CLI from ondrej/php..."
+PHP_PKG="php${PHP_VERSION}-cli"
+PHP_DEB_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/${PHP_PKG}_${PHP_VERSION}*_amd64.deb"
 
-# Verify FrankenPHP can run PHP
-if ! "$INSTALL_DIR/frankenphp" php -v >/dev/null 2>&1; then
-    echo "ERROR: FrankenPHP cannot run PHP CLI"
-    echo "Try: $INSTALL_DIR/frankenphp php -v"
+# Try to find and download the latest PHP package
+PHP_DEB=$(curl -s "https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/" | grep -oE "${PHP_PKG}_[^/]*_amd64\.deb" | tail -1)
+
+if [ -z "$PHP_DEB" ]; then
+    echo "ERROR: Could not find PHP ${PHP_VERSION} package from ondrej/php"
     exit 1
 fi
 
-echo "✓ PHP CLI available via FrankenPHP"
+PHP_DEB_FULL_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/pool/main/p/php${PHP_VERSION}/${PHP_DEB}"
+
+if ! curl -fsSL "$PHP_DEB_FULL_URL" -o "/tmp/${PHP_DEB}"; then
+    echo "ERROR: Failed to download PHP from ondrej/php"
+    exit 1
+fi
+
+# Install PHP .deb
+echo "-----> Installing PHP ${PHP_VERSION} CLI..."
+if ! dpkg -i "/tmp/${PHP_DEB}" 2>/dev/null; then
+    echo "WARNING: dpkg install had issues, but continuing..."
+fi
+
+rm -f "/tmp/${PHP_DEB}"
+
+# Verify PHP is available
+if ! command -v "php${PHP_VERSION}" >/dev/null 2>&1; then
+    echo "ERROR: PHP ${PHP_VERSION} CLI not found after installation"
+    exit 1
+fi
+
+PHP_BIN="php${PHP_VERSION}"
+echo "✓ PHP ${PHP_VERSION} CLI installed"
 export PHP_BIN
 
-# Download Composer (pre-built phar)
+# Download Composer
 echo "-----> Downloading Composer..."
 if ! curl -fsSL https://getcomposer.org/download/latest-stable/composer.phar -o "$INSTALL_DIR/composer"; then
     echo "ERROR: Failed to download Composer"
@@ -70,8 +108,6 @@ echo "✓ Composer installed"
 # Install PHP dependencies
 if [ -f "composer.json" ]; then
     echo "-----> Installing PHP dependencies with Composer..."
-
-    export PATH="$INSTALL_DIR:$PATH"
 
     if ! "$PHP_BIN" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
         echo "ERROR: Composer install failed"
