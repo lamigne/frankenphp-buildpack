@@ -220,7 +220,7 @@ fi
 chmod +x "$INSTALL_DIR/composer"
 echo "✓ Composer installed"
 
-# Install PHP dependencies
+# Install PHP dependencies with Composer (optional - can be pre-installed in vendor/)
 if [ -f "$BUILD_DIR/composer.json" ]; then
     echo "-----> Installing PHP dependencies with Composer..."
 
@@ -229,17 +229,23 @@ if [ -f "$BUILD_DIR/composer.json" ]; then
     export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$LD_LIBRARY_PATH"
 
     echo "Running: $PHP_BIN $INSTALL_DIR/composer install --no-dev --optimize-autoloader"
-    if "$PHP_BIN" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
-        echo "✓ PHP dependencies installed"
+    if "$PHP_BIN" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader 2>&1; then
+        echo "✓ PHP dependencies installed with Composer"
     else
         composer_exit=$?
-        echo "Warning: Composer returned exit code $composer_exit"
-        echo "Checking if vendor/ was still created..."
+        echo ""
+        echo "⚠ Warning: Composer install failed (exit code $composer_exit)"
+        echo ""
         if [ -d "vendor" ] && [ -f "vendor/autoload.php" ]; then
-            echo "✓ vendor directory exists, proceeding anyway"
+            echo "✓ Vendor directory exists - proceeding with existing dependencies"
         else
-            echo "ERROR: Composer failed and vendor directory not created"
-            exit $composer_exit
+            echo "ℹ Note: vendor/ directory not found"
+            echo "  To fix this, you can:"
+            echo "  1. Run 'composer install' locally and commit vendor/"
+            echo "  2. Or commit composer.lock and include vendor in git"
+            echo ""
+            echo "  For now, proceeding without installed dependencies..."
+            echo "  Your app may fail to start if dependencies are required."
         fi
     fi
 fi
