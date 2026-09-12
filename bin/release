@@ -1,0 +1,9 @@
+#!/bin/bash
+# Docker buildpack release script
+# Returns default Procfile or nothing (let Procfile take precedence)
+
+cat <<EOF
+---
+default_process_types:
+  web: frankenphp run --config /app/Caddyfile
+EOF
