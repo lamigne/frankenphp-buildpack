@@ -44,14 +44,24 @@ chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
 # PHP CLI should be installed via apt buildpack (Aptfile)
-# Verify PHP is available
-echo "-----> Verifying PHP CLI..."
-if ! command -v php >/dev/null 2>&1; then
-    echo "ERROR: PHP CLI not found"
-    echo "Please add 'php-cli' to your Aptfile"
+# Find PHP - it may not be in PATH yet, so check common locations
+echo "-----> Finding PHP CLI..."
+PHP_BIN=""
+for php_path in /usr/bin/php /app/.apt/usr/bin/php /usr/local/bin/php; do
+    if [ -x "$php_path" ]; then
+        PHP_BIN="$php_path"
+        break
+    fi
+done
+
+if [ -z "$PHP_BIN" ]; then
+    echo "ERROR: PHP CLI not found in common locations"
+    echo "Please ensure 'php-cli' is in your Aptfile"
     exit 1
 fi
-echo "✓ PHP CLI available"
+
+echo "✓ PHP CLI found at: $PHP_BIN"
+export PHP_BIN
 
 # Download Composer (pre-built phar)
 echo "-----> Downloading Composer..."
@@ -69,7 +79,7 @@ if [ -f "composer.json" ]; then
 
     export PATH="$INSTALL_DIR:$PATH"
 
-    if ! php "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
+    if ! "$PHP_BIN" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
         echo "ERROR: Composer install failed"
         exit 1
     fi
