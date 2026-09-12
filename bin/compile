@@ -44,8 +44,18 @@ chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
 # PHP CLI should be installed via apt buildpack (Aptfile)
-# Find PHP - it may not be in PATH yet, so check common locations
+# The apt buildpack installs packages to /app/.apt/ and creates profile scripts
+# Source the profile scripts to add them to PATH
 echo "-----> Finding PHP CLI..."
+if [ -d "/app/.profile.d" ]; then
+    for script in /app/.profile.d/*.sh; do
+        if [ -f "$script" ]; then
+            echo "Sourcing: $script"
+            . "$script"
+        fi
+    done
+fi
+
 PHP_BIN=""
 for php_path in /usr/bin/php /app/.apt/usr/bin/php /usr/local/bin/php; do
     if [ -x "$php_path" ]; then
@@ -55,9 +65,15 @@ for php_path in /usr/bin/php /app/.apt/usr/bin/php /usr/local/bin/php; do
 done
 
 if [ -z "$PHP_BIN" ]; then
-    echo "ERROR: PHP CLI not found in common locations"
-    echo "Please ensure 'php-cli' is in your Aptfile"
-    exit 1
+    # Last resort: try using php command if it's in PATH now
+    if command -v php >/dev/null 2>&1; then
+        PHP_BIN="php"
+    else
+        echo "ERROR: PHP CLI not found"
+        echo "Checked locations: /usr/bin/php, /app/.apt/usr/bin/php, /usr/local/bin/php"
+        echo "Please ensure 'php-cli' is in your Aptfile"
+        exit 1
+    fi
 fi
 
 echo "✓ PHP CLI found at: $PHP_BIN"
