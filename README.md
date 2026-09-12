@@ -4,105 +4,116 @@ A custom buildpack for deploying [FrankenPHP](https://frankenphp.dev) applicatio
 
 ## Overview
 
-This buildpack enables you to use FrankenPHP with Dockerfile-based deployments on Scalingo. It prevents the default PHP buildpack from interfering with your custom Docker configuration.
-
-## Why This Buildpack?
-
-Scalingo auto-detects buildpacks based on project files:
-- `composer.json` → PHP buildpack
-- `package.json` → Node buildpack
-- `Dockerfile` → Docker builder
-
-If your FrankenPHP app has `composer.json`, Scalingo's PHP buildpack claims the app before your Dockerfile is used. This custom buildpack takes precedence and ensures your Dockerfile is used instead.
+This buildpack provides a complete, self-contained FrankenPHP deployment solution on Scalingo. It handles:
+- Downloading and installing the FrankenPHP binary
+- Installing Composer
+- Running `composer install` to manage PHP dependencies
+- Setting up application directories
+- Configuring the start command
 
 ## Installation
 
-### 1. Create `Aptfile` in your app root
-
-Copy and customize [example.Aptfile](example.Aptfile) to install PHP, Caddy, and dependencies:
-
-```bash
-cp example.Aptfile Aptfile
-# Edit Aptfile to adjust PHP version and extensions as needed
-```
-
-### 2. Create `.buildpacks` file in your app:
+### 1. Create `.buildpacks` file in your app:
 
 ```
-https://github.com/scalingo/buildpack-apt
 https://github.com/YOUR_USERNAME/frankenphp-buildpack
 ```
 
-**Important:** Order matters! apt buildpack must come **before** FrankenPHP buildpack.
-
-### 3. Commit and deploy:
+### 2. Commit and deploy:
 
 ```bash
-git add .buildpacks Aptfile
-git commit -m "Use APT + FrankenPHP buildpacks"
+git add .buildpacks
+git commit -m "Use FrankenPHP buildpack"
 git push scalingo main
 ```
 
 ## How It Works
 
-### Multi-Buildpack Approach
+The buildpack consists of three scripts:
 
-1. **APT Buildpack** (runs first)
-   - Installs system packages from `Aptfile` (PHP, Caddy, Composer, etc.)
+1. **`bin/detect`** — Detects FrankenPHP projects (checks for `Caddyfile` + `composer.json`)
+2. **`bin/compile`** — 
+   - Detects system architecture and libc type
+   - Downloads FrankenPHP binary from GitHub releases
+   - Downloads and installs Composer
+   - Runs `composer install --no-dev --optimize-autoloader`
+   - Creates application directories (storage, bootstrap/cache for Laravel)
+3. **`bin/release`** — Specifies the default process: `frankenphp run --config /app/Caddyfile`
 
-2. **FrankenPHP Buildpack** (runs second)
-   - Detects FrankenPHP project (has `Caddyfile`)
-   - Installs PHP dependencies via Composer
-   - Prepares the application
+## Build Process
 
-### FrankenPHP Buildpack Scripts
+When you deploy with this buildpack:
 
-- **`bin/detect`** — Returns 0 if `Caddyfile` exists
-- **`bin/compile`** — Installs composer dependencies, prepares app directories
-- **`bin/release`** — Specifies the default web process: `frankenphp run --config /app/Caddyfile`
+```
+git push scalingo main
+  ↓
+Scalingo detects Caddyfile + composer.json
+  ↓
+FrankenPHP buildpack runs
+  ↓
+1. Download FrankenPHP binary (latest release)
+2. Download Composer
+3. Run: composer install --no-dev --optimize-autoloader
+4. Setup app directories
+  ↓
+Application starts with: frankenphp run --config /app/Caddyfile
+```
 
 ## Typical Project Structure
 
-Your FrankenPHP app should have:
+Your FrankenPHP app needs:
 
 ```
 your-app/
-├── Caddyfile           # Caddy configuration (required)
-├── public/             # Web root
-├── app/                # Your PHP code
+├── .buildpacks         # Points to this buildpack (required)
+├── Caddyfile           # Caddy web server config (required)
 ├── composer.json       # PHP dependencies (required)
-├── composer.lock       # Lock file
-├── .buildpacks         # Points to APT + FrankenPHP buildpacks
-└── Aptfile             # System packages to install
+├── composer.lock       # Locked versions
+├── public/             # Web root (index.php, assets, etc.)
+├── app/                # Your PHP code
+├── config/             # Application config
+└── storage/            # Writable directory (created by buildpack)
 ```
 
-## Configuration
+## Customization
 
-### Using a Custom Procfile
+### Custom FrankenPHP Arguments
 
-If you need a different start command, create a `Procfile` in your app:
+To use custom FrankenPHP arguments, create a `Procfile` in your app:
 
 ```
 web: frankenphp run --config /app/Caddyfile --adapter cgi
 ```
 
-The Procfile takes precedence over the buildpack's default process type.
+The Procfile takes precedence over the buildpack's default command.
+
+### Custom PHP Configuration
+
+Place a `php.ini` file in your app root. FrankenPHP will use it if found.
 
 ## Troubleshooting
 
-### Build failing with PHP buildpack error?
+### Build fails: "FrankenPHP binary not found"
 
-Ensure:
-1. `.buildpacks` file exists in your app root
-2. `Dockerfile` exists in your app root
-3. Both files are committed to git
+The binary download failed. Check:
+1. Internet connectivity during build
+2. GitHub releases accessible: https://github.com/dunglas/frankenphp/releases
+3. Build logs: `scalingo logs --follow`
 
-### Wrong process type running?
+### Build fails: "Composer install failed"
+
+PHP dependency installation failed. Check:
+1. `composer.json` is valid
+2. All dependencies are available
+3. Disk space available during build
+
+### App starts but crashes
 
 Check:
-1. Your `Procfile` (if it exists)
-2. The buildpack's `bin/release` script
-3. Scalingo deployment logs: `scalingo logs --follow`
+1. Caddyfile is valid
+2. `public/` directory exists
+3. File permissions (buildpack creates writable directories)
+4. Application logs: `scalingo logs --follow`
 
 ## License
 

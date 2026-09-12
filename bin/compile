@@ -8,29 +8,68 @@ ENV_DIR=$3
 cd "$BUILD_DIR"
 
 echo "-----> FrankenPHP Buildpack"
+echo "-----> Installing FrankenPHP and dependencies..."
 
-# Install PHP dependencies via composer
-if [ -f "$BUILD_DIR/composer.json" ]; then
-    echo "-----> Installing PHP dependencies..."
+# Determine architecture and libc
+ARCH=$(uname -m)
+if [ "$ARCH" = "aarch64" ]; then
+    ARCH="aarch64"
+elif [ "$ARCH" = "x86_64" ]; then
+    ARCH="x86_64"
+else
+    echo "ERROR: Unsupported architecture: $ARCH"
+    exit 1
+fi
 
-    # Download composer if not present
-    if [ ! -f "composer.phar" ]; then
-        curl -fsSL https://getcomposer.org/installer | php -- --quiet
-    fi
+# Determine libc (gnu vs musl)
+if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+    LIBC="gnu"
+else
+    LIBC="musl"
+fi
 
-    php composer.phar install --no-dev --optimize-autoloader
+BINARY_NAME="frankenphp-linux-${ARCH}-${LIBC}"
+BINARY_URL="https://github.com/dunglas/frankenphp/releases/latest/download/${BINARY_NAME}"
+INSTALL_DIR="/app/bin"
 
-    if [ $? -ne 0 ]; then
+mkdir -p "$INSTALL_DIR"
+
+echo "-----> Downloading FrankenPHP (${ARCH}-${LIBC})..."
+if ! curl -fsSL "$BINARY_URL" -o "$INSTALL_DIR/frankenphp"; then
+    echo "ERROR: Failed to download FrankenPHP from $BINARY_URL"
+    exit 1
+fi
+
+chmod +x "$INSTALL_DIR/frankenphp"
+echo "✓ FrankenPHP installed"
+
+# Download Composer
+echo "-----> Downloading Composer..."
+if ! curl -fsSL https://getcomposer.org/installer | php -- --install-dir="$INSTALL_DIR" --filename=composer; then
+    echo "ERROR: Failed to download Composer"
+    exit 1
+fi
+
+chmod +x "$INSTALL_DIR/composer"
+echo "✓ Composer installed"
+
+# Install PHP dependencies
+if [ -f "composer.json" ]; then
+    echo "-----> Installing PHP dependencies with Composer..."
+
+    export PATH="$INSTALL_DIR:$PATH"
+
+    if ! "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
         echo "ERROR: Composer install failed"
         exit 1
     fi
 
-    echo "-----> PHP dependencies installed"
+    echo "✓ PHP dependencies installed"
 fi
 
-# Create required directories
+# Create application directories (for Laravel, etc.)
 mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
 chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
 
-echo "-----> FrankenPHP buildpack ready"
+echo "-----> FrankenPHP buildpack complete!"
 exit 0
