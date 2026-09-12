@@ -152,17 +152,28 @@ echo "✓ PHP ${PHP_VERSION} CLI downloaded"
 echo "Setting up library compatibility layer..."
 mkdir -p "$INSTALL_DIR/lib"
 
-# Try to download libxml2 from Ubuntu Jammy repos (same version PHP was built against)
-echo "Attempting to download libxml2 from Ubuntu Jammy repository..."
-UBUNTU_LIBXML2_URL="http://archive.ubuntu.com/ubuntu/pool/main/l/libxml2/libxml2_2.9.13+dfsg-1ubuntu0.3_amd64.deb"
-if curl -fsSL --head "$UBUNTU_LIBXML2_URL" 2>/dev/null | head -1 | grep -q "200"; then
-    echo "Found Ubuntu Jammy libxml2, downloading..."
-    if curl -fsSL "$UBUNTU_LIBXML2_URL" -o "/tmp/libxml2.deb"; then
-        mkdir -p /tmp/libxml2-extracted
-        dpkg -x "/tmp/libxml2.deb" /tmp/libxml2-extracted 2>/dev/null || true
-        if [ -d "/tmp/libxml2-extracted/usr/lib" ]; then
-            cp -r /tmp/libxml2-extracted/usr/lib/x86_64-linux-gnu/libxml2* "$INSTALL_DIR/lib/" 2>/dev/null || true
-            echo "✓ Libxml2 from Ubuntu Jammy installed"
+# Download libxml2 from Ubuntu Jammy repository
+echo "Downloading libxml2 from Ubuntu Jammy repository..."
+UBUNTU_REPO="http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/"
+
+if curl -fsSL "${UBUNTU_REPO}Packages.xz" 2>/dev/null | xz -d 2>/dev/null | grep -A 8 "^Package: libxml2$" > /tmp/libxml2-info.txt 2>/dev/null; then
+    if [ -s /tmp/libxml2-info.txt ]; then
+        libxml2_path=$(grep "^Filename:" /tmp/libxml2-info.txt | head -1 | awk '{print $2}')
+        if [ ! -z "$libxml2_path" ]; then
+            libxml2_file=$(basename "$libxml2_path")
+            libxml2_url="http://archive.ubuntu.com/ubuntu/${libxml2_path}"
+
+            echo "  Found: $libxml2_file"
+            if curl -fsSL "$libxml2_url" -o "/tmp/$libxml2_file"; then
+                mkdir -p /tmp/libxml2-extracted
+                dpkg -x "/tmp/$libxml2_file" /tmp/libxml2-extracted 2>/dev/null || true
+                if [ -d "/tmp/libxml2-extracted/usr/lib" ]; then
+                    find /tmp/libxml2-extracted/usr/lib -name "libxml2.so*" -type f -o -type l | while read lib; do
+                        cp -P "$lib" "$INSTALL_DIR/lib/" 2>/dev/null || true
+                    done
+                    echo "  ✓ Libxml2 extracted"
+                fi
+            fi
         fi
     fi
 fi
@@ -178,7 +189,7 @@ for lib_path in /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/l
     fi
 done
 
-# List what we copied for debugging
+# List what we have
 echo "Libraries in compatibility layer:"
 ls -1 "$INSTALL_DIR/lib/" 2>/dev/null | head -15 || echo "  (none)"
 
