@@ -13,26 +13,30 @@ This buildpack provides a complete, self-contained FrankenPHP deployment solutio
 
 ## Installation
 
-### 1. Create `.buildpacks` file in your app:
+### Recommended Setup
+
+Create a `.buildpacks` file in your app root:
 
 ```
+https://github.com/Scalingo/php-buildpack
 https://github.com/YOUR_USERNAME/frankenphp-buildpack
 ```
 
-### 2. Commit and deploy:
+Then commit and deploy:
 
 ```bash
 git add .buildpacks
-git commit -m "Use FrankenPHP buildpack"
+git commit -m "Use PHP and FrankenPHP buildpacks"
 git push scalingo main
 ```
 
-That's it! The buildpack automatically:
-- Parses your `composer.json` for PHP version
-- Downloads FrankenPHP binary
-- Downloads PHP CLI from ondrej/php repository
-- Installs Composer
-- Runs `composer install`
+**Why this order?**
+1. **PHP buildpack** runs first → installs PHP CLI, Composer, runs `composer install`
+2. **FrankenPHP buildpack** runs second → installs FrankenPHP binary, configures it as the runtime
+
+The two buildpacks work together:
+- PHP buildpack handles dependency management
+- FrankenPHP buildpack provides the application server
 
 ## How It Works
 

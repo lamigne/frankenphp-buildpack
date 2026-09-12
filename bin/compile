@@ -59,53 +59,13 @@ fi
 chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
-# PHP CLI and Composer are installed by apt buildpack
-echo "-----> Checking for PHP CLI and Composer (from apt buildpack)..."
-
-PHP_BIN=""
-if command -v php >/dev/null 2>&1; then
-    PHP_BIN="php"
-    echo "✓ PHP $(php -v | head -1) available"
+# PHP CLI and Composer are installed and run by the PHP buildpack
+# Dependencies should already be installed in vendor/
+echo "-----> Verifying PHP dependencies..."
+if [ -d "$BUILD_DIR/vendor" ] && [ -f "$BUILD_DIR/vendor/autoload.php" ]; then
+    echo "✓ PHP dependencies installed (vendor/ found)"
 else
-    echo "⚠ Warning: php not found (ensure apt buildpack is configured with php-cli)"
-fi
-
-if command -v composer >/dev/null 2>&1; then
-    echo "✓ Composer available"
-else
-    echo "⚠ Warning: composer not found (ensure apt buildpack is configured with composer)"
-fi
-
-# Install PHP dependencies with Composer (optional - can be pre-installed in vendor/)
-if [ -f "$BUILD_DIR/composer.json" ]; then
-    if command -v composer >/dev/null 2>&1; then
-        echo "-----> Installing PHP dependencies with Composer..."
-
-        cd "$BUILD_DIR"
-
-        echo "Running: composer install --no-dev --optimize-autoloader"
-        if composer install --no-dev --optimize-autoloader 2>&1; then
-            echo "✓ PHP dependencies installed with Composer"
-        else
-            composer_exit=$?
-            echo ""
-            echo "⚠ Warning: Composer install failed (exit code $composer_exit)"
-            echo ""
-            if [ -d "vendor" ] && [ -f "vendor/autoload.php" ]; then
-                echo "✓ Vendor directory exists - proceeding with existing dependencies"
-            else
-                echo "ℹ Note: vendor/ directory not found"
-                echo "  To fix this, you can:"
-                echo "  1. Run 'composer install' locally and commit vendor/"
-                echo "  2. Or commit composer.lock and include vendor in git"
-                echo ""
-                echo "  For now, proceeding without installed dependencies..."
-            fi
-        fi
-    else
-        echo "⚠ Skipping Composer install - composer not available"
-        echo "  Make sure to commit vendor/ directory or run 'composer install' locally"
-    fi
+    echo "⚠ Warning: vendor/ not found - ensure PHP buildpack ran first and install succeeded"
 fi
 
 # Create application directories
