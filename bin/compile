@@ -148,24 +148,48 @@ fi
 
 echo "✓ PHP ${PHP_VERSION} CLI downloaded"
 
-# Debug: show what libraries were extracted
-echo "Libraries extracted to $INSTALL_DIR/lib:"
-ls -la "$INSTALL_DIR/lib/" 2>/dev/null | head -20 || echo "  (empty or error)"
+# Create symlinks for version mismatches (e.g., PHP built against libxml2.so.2 but system has libxml2.so.16)
+echo "Linking system libraries for PHP compatibility..."
+mkdir -p "$INSTALL_DIR/lib"
+
+# Link common library version mismatches
+for lib_name in libxml2 libssl libcrypto; do
+    # Find what versions the system has
+    for lib_path in /usr/lib/x86_64-linux-gnu/${lib_name}.so*; do
+        if [ -f "$lib_path" ]; then
+            lib_basename=$(basename "$lib_path")
+            # Create symlink in our lib directory
+            ln -sf "$lib_path" "$INSTALL_DIR/lib/$lib_basename" 2>/dev/null || true
+        fi
+    done
+done
 
 # Verify PHP works (with library path set)
 export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$LD_LIBRARY_PATH"
-echo "LD_LIBRARY_PATH set to: $LD_LIBRARY_PATH"
 
 if ! "$PHP_BIN" -v > /dev/null 2>&1; then
     echo "ERROR: PHP binary verification failed"
-    echo "Debug: checking binary and libraries..."
-    file "$PHP_BIN"
-    echo "Checking for libxml2.so.2 in extracted libraries:"
-    find "$INSTALL_DIR/lib" -name "libxml2*" 2>/dev/null || echo "  Not found"
-    echo "Checking system library paths:"
-    ldconfig -p 2>/dev/null | grep libxml2 || echo "  Not found in system"
-    ldd "$PHP_BIN" 2>&1 || true
-    exit 1
+    echo "Debug: attempting to resolve missing libraries..."
+
+    # Find missing libraries from ldd output
+    missing_libs=$(ldd "$PHP_BIN" 2>&1 | grep "not found" | awk '{print $1}')
+    for missing_lib in $missing_libs; do
+        echo "  Missing: $missing_lib"
+        # Try to find the library on the system
+        found_lib=$(ldconfig -p 2>/dev/null | grep "/$missing_lib" | head -1 | awk '{print $NF}')
+        if [ ! -z "$found_lib" ]; then
+            echo "    Found at: $found_lib"
+            # Create symlink
+            ln -sf "$found_lib" "$INSTALL_DIR/lib/$missing_lib" 2>/dev/null || true
+        fi
+    done
+
+    # Try again
+    if ! "$PHP_BIN" -v > /dev/null 2>&1; then
+        echo "ERROR: Still cannot run PHP binary"
+        ldd "$PHP_BIN" 2>&1 || true
+        exit 1
+    fi
 fi
 
 echo "✓ PHP ${PHP_VERSION} CLI installed and verified"
