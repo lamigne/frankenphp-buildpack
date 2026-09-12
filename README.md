@@ -90,7 +90,14 @@ your-app/
 To use custom FrankenPHP arguments, create a `Procfile` in your app:
 
 ```
-web: frankenphp run --config /app/Caddyfile --adapter cgi
+web: /app/bin/frankenphp run --config /app/Caddyfile --adapter cgi
+```
+
+Or copy the buildpack's Procfile:
+
+```bash
+cp node_modules/.bin/../../../Procfile .  # Adjust path to buildpack
+# Then edit as needed
 ```
 
 The Procfile takes precedence over the buildpack's default command.
