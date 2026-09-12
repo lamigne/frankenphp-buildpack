@@ -43,9 +43,22 @@ fi
 chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
-# Download Composer
+# Download PHP CLI (static binary)
+echo "-----> Downloading PHP CLI..."
+PHP_BINARY_NAME="php-${ARCH}-${LIBC}"
+PHP_BINARY_URL="https://github.com/static-php/static-php-cli/releases/latest/download/${PHP_BINARY_NAME}"
+
+if ! curl -fsSL "$PHP_BINARY_URL" -o "$INSTALL_DIR/php"; then
+    echo "ERROR: Failed to download PHP CLI from $PHP_BINARY_URL"
+    exit 1
+fi
+
+chmod +x "$INSTALL_DIR/php"
+echo "✓ PHP CLI installed"
+
+# Download Composer (pre-built phar)
 echo "-----> Downloading Composer..."
-if ! curl -fsSL https://getcomposer.org/installer | php -- --install-dir="$INSTALL_DIR" --filename=composer; then
+if ! curl -fsSL https://getcomposer.org/download/latest-stable/composer.phar -o "$INSTALL_DIR/composer"; then
     echo "ERROR: Failed to download Composer"
     exit 1
 fi
@@ -59,7 +72,7 @@ if [ -f "composer.json" ]; then
 
     export PATH="$INSTALL_DIR:$PATH"
 
-    if ! "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
+    if ! "$INSTALL_DIR/php" "$INSTALL_DIR/composer" install --no-dev --optimize-autoloader; then
         echo "ERROR: Composer install failed"
         exit 1
     fi
