@@ -43,7 +43,7 @@ else
     LIBC="musl"
 fi
 
-INSTALL_DIR="/app/bin"
+INSTALL_DIR="$BUILD_DIR/bin"
 mkdir -p "$INSTALL_DIR"
 
 # Download FrankenPHP
