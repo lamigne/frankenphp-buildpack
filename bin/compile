@@ -80,7 +80,7 @@ if [ ! -s /tmp/php-cli-info.txt ]; then
     exit 1
 fi
 
-# Extract filename from package info
+# Extract filename and dependencies from package info
 PHP_DEB_PATH=$(grep "^Filename:" /tmp/php-cli-info.txt | head -1 | awk '{print $2}')
 if [ -z "$PHP_DEB_PATH" ]; then
     echo "ERROR: Could not parse PHP package filename"
@@ -90,39 +90,111 @@ fi
 PHP_DEB=$(basename "$PHP_DEB_PATH")
 echo "Found: $PHP_DEB"
 
-# Construct full URL
-PHP_DEB_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/${PHP_DEB_PATH}"
+# Get package dependencies
+PHP_DEPS=$(grep "^Depends:" /tmp/php-cli-info.txt | head -1 | sed 's/^Depends: //')
+echo "Dependencies: $PHP_DEPS"
 
-# Verify URL exists before downloading
-echo "Verifying URL: $PHP_DEB_URL"
+# Download PHP .deb and its dependencies
+download_and_extract_deb() {
+    local pkg_name=$1
+    local deb_path=$2
+    local deb_file=$(basename "$deb_path")
+    local deb_url="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/${deb_path}"
+
+    echo "Downloading: $deb_file"
+
+    # Verify URL exists before downloading
+    if ! curl -fsSI "$deb_url" | head -1 | grep -q "200"; then
+        echo "Warning: Could not verify $deb_url, skipping"
+        return 1
+    fi
+
+    if ! curl -fsSL "$deb_url" -o "$PHP_DEB_DIR/${deb_file}"; then
+        echo "Warning: Failed to download $deb_file, skipping"
+        return 1
+    fi
+
+    # Extract to a root directory
+    dpkg -x "$PHP_DEB_DIR/${deb_file}" "$PHP_DEB_DIR/php-root" 2>/dev/null || true
+    return 0
+}
+
+# Download main PHP CLI package
+PHP_DEB_URL="https://ppa.launchpadcontent.net/ondrej/php/ubuntu/${PHP_DEB_PATH}"
 if ! curl -fsSI "$PHP_DEB_URL" | head -1 | grep -q "200"; then
     echo "ERROR: PHP package URL not accessible: $PHP_DEB_URL"
     exit 1
 fi
 
-# Download PHP .deb
+# Extract PHP .deb
 echo "Downloading PHP ${PHP_VERSION} CLI..."
 if ! curl -fsSL "$PHP_DEB_URL" -o "$PHP_DEB_DIR/${PHP_DEB}"; then
     echo "ERROR: Failed to download PHP package"
     exit 1
 fi
 
-# Extract PHP .deb (full extraction for libraries)
+# Extract to root directory
+mkdir -p "$PHP_DEB_DIR/php-root"
+dpkg -x "$PHP_DEB_DIR/${PHP_DEB}" "$PHP_DEB_DIR/php-root" 2>/dev/null || true
+
+# Download PHP CLI dependency packages
+PHP_SHORT_VERSION=$(echo "$extracted_version" | cut -d. -f1,2)
+
+echo "Downloading PHP ${PHP_VERSION} dependencies..."
+
+# Helper to find and download from Ubuntu standard repository
+download_from_ubuntu() {
+    local pkg_name=$1
+    local ubuntu_repo_url="http://archive.ubuntu.com/ubuntu/dists/jammy/main/binary-amd64/"
+
+    echo "  Searching Ubuntu repo for: $pkg_name"
+
+    if curl -fsSL "${ubuntu_repo_url}Packages.xz" 2>/dev/null | xz -d 2>/dev/null | grep -A 8 "^Package: ${pkg_name}$" > /tmp/ubuntu-dep-info.txt 2>/dev/null; then
+        if [ -s /tmp/ubuntu-dep-info.txt ]; then
+            dep_path=$(grep "^Filename:" /tmp/ubuntu-dep-info.txt | head -1 | awk '{print $2}')
+            if [ ! -z "$dep_path" ]; then
+                local deb_file=$(basename "$dep_path")
+                local deb_url="http://archive.ubuntu.com/ubuntu/${dep_path}"
+
+                echo "  Found: $deb_file"
+                if curl -fsSL "$deb_url" -o "$PHP_DEB_DIR/${deb_file}"; then
+                    dpkg -x "$PHP_DEB_DIR/${deb_file}" "$PHP_DEB_DIR/php-root" 2>/dev/null || true
+                    return 0
+                fi
+            fi
+        fi
+    fi
+    return 1
+}
+
+# Download php-common from ondrej/php
+if curl -fsSL "${REPO_URL}Packages.xz" 2>/dev/null | xz -d 2>/dev/null | grep -A 8 "^Package: php${PHP_SHORT_VERSION}-common$" > /tmp/dep-info.txt 2>/dev/null; then
+    if [ -s /tmp/dep-info.txt ]; then
+        dep_path=$(grep "^Filename:" /tmp/dep-info.txt | head -1 | awk '{print $2}')
+        if [ ! -z "$dep_path" ]; then
+            echo "Downloading: php${PHP_SHORT_VERSION}-common"
+            download_and_extract_deb "php${PHP_SHORT_VERSION}-common" "$dep_path" || true
+        fi
+    fi
+fi
+
+# Download system libraries from Ubuntu standard repository
+echo "Downloading system libraries..."
+for lib_pkg in "libxml2" "libc-bin"; do
+    download_from_ubuntu "$lib_pkg" || true
+done
+
+# Install PHP ${PHP_VERSION} CLI
 echo "-----> Installing PHP ${PHP_VERSION} CLI..."
 cd "$PHP_DEB_DIR"
 
-if ! dpkg -x "${PHP_DEB}" php-cli-root 2>/dev/null; then
-    echo "ERROR: Failed to extract PHP package"
-    exit 1
-fi
-
 # Copy PHP CLI to install dir
-if [ -f "php-cli-root/usr/bin/php${PHP_VERSION}" ]; then
-    cp "php-cli-root/usr/bin/php${PHP_VERSION}" "$INSTALL_DIR/php"
+if [ -f "php-root/usr/bin/php${PHP_VERSION}" ]; then
+    cp "php-root/usr/bin/php${PHP_VERSION}" "$INSTALL_DIR/php"
     chmod +x "$INSTALL_DIR/php"
     PHP_BIN="$INSTALL_DIR/php"
-elif [ -f "php-cli-root/usr/bin/php" ]; then
-    cp "php-cli-root/usr/bin/php" "$INSTALL_DIR/php"
+elif [ -f "php-root/usr/bin/php" ]; then
+    cp "php-root/usr/bin/php" "$INSTALL_DIR/php"
     chmod +x "$INSTALL_DIR/php"
     PHP_BIN="$INSTALL_DIR/php"
 else
@@ -130,10 +202,15 @@ else
     exit 1
 fi
 
-# Copy PHP libraries from extracted package
-if [ -d "php-cli-root/usr/lib" ]; then
+# Copy all libraries from extracted packages
+if [ -d "php-root/usr/lib" ]; then
     mkdir -p "$INSTALL_DIR/lib"
-    cp -r php-cli-root/usr/lib/* "$INSTALL_DIR/lib/" 2>/dev/null || true
+    cp -r php-root/usr/lib/* "$INSTALL_DIR/lib/" 2>/dev/null || true
+fi
+
+if [ -d "php-root/lib" ]; then
+    mkdir -p "$INSTALL_DIR/lib"
+    cp -r php-root/lib/* "$INSTALL_DIR/lib/" 2>/dev/null || true
 fi
 
 # Verify PHP works (with library path set)
