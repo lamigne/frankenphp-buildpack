@@ -31,7 +31,7 @@ php-cli
 Copy [example.buildpacks](example.buildpacks):
 
 ```
-https://github.com/scalingo/buildpack-apt
+https://github.com/Scalingo/apt-buildpack
 https://github.com/YOUR_USERNAME/frankenphp-buildpack
 ```
 
