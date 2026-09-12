@@ -60,47 +60,51 @@ chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
 # PHP CLI and Composer are installed by apt buildpack
-echo "-----> Verifying PHP CLI and Composer (from apt buildpack)..."
+echo "-----> Checking for PHP CLI and Composer (from apt buildpack)..."
 
-if ! command -v php >/dev/null 2>&1; then
-    echo "ERROR: php not found. Ensure apt buildpack is configured with php-cli"
-    exit 1
+PHP_BIN=""
+if command -v php >/dev/null 2>&1; then
+    PHP_BIN="php"
+    echo "✓ PHP $(php -v | head -1) available"
+else
+    echo "⚠ Warning: php not found (ensure apt buildpack is configured with php-cli)"
 fi
 
-if ! command -v composer >/dev/null 2>&1; then
-    echo "ERROR: composer not found. Ensure apt buildpack is configured with composer"
-    exit 1
+if command -v composer >/dev/null 2>&1; then
+    echo "✓ Composer available"
+else
+    echo "⚠ Warning: composer not found (ensure apt buildpack is configured with composer)"
 fi
-
-PHP_BIN="php"
-echo "✓ PHP $(php -v | head -1) available"
-echo "✓ Composer available"
 
 # Install PHP dependencies with Composer (optional - can be pre-installed in vendor/)
 if [ -f "$BUILD_DIR/composer.json" ]; then
-    echo "-----> Installing PHP dependencies with Composer..."
+    if command -v composer >/dev/null 2>&1; then
+        echo "-----> Installing PHP dependencies with Composer..."
 
-    cd "$BUILD_DIR"
+        cd "$BUILD_DIR"
 
-    echo "Running: composer install --no-dev --optimize-autoloader"
-    if composer install --no-dev --optimize-autoloader 2>&1; then
-        echo "✓ PHP dependencies installed with Composer"
-    else
-        composer_exit=$?
-        echo ""
-        echo "⚠ Warning: Composer install failed (exit code $composer_exit)"
-        echo ""
-        if [ -d "vendor" ] && [ -f "vendor/autoload.php" ]; then
-            echo "✓ Vendor directory exists - proceeding with existing dependencies"
+        echo "Running: composer install --no-dev --optimize-autoloader"
+        if composer install --no-dev --optimize-autoloader 2>&1; then
+            echo "✓ PHP dependencies installed with Composer"
         else
-            echo "ℹ Note: vendor/ directory not found"
-            echo "  To fix this, you can:"
-            echo "  1. Run 'composer install' locally and commit vendor/"
-            echo "  2. Or commit composer.lock and include vendor in git"
+            composer_exit=$?
             echo ""
-            echo "  For now, proceeding without installed dependencies..."
-            echo "  Your app may fail to start if dependencies are required."
+            echo "⚠ Warning: Composer install failed (exit code $composer_exit)"
+            echo ""
+            if [ -d "vendor" ] && [ -f "vendor/autoload.php" ]; then
+                echo "✓ Vendor directory exists - proceeding with existing dependencies"
+            else
+                echo "ℹ Note: vendor/ directory not found"
+                echo "  To fix this, you can:"
+                echo "  1. Run 'composer install' locally and commit vendor/"
+                echo "  2. Or commit composer.lock and include vendor in git"
+                echo ""
+                echo "  For now, proceeding without installed dependencies..."
+            fi
         fi
+    else
+        echo "⚠ Skipping Composer install - composer not available"
+        echo "  Make sure to commit vendor/ directory or run 'composer install' locally"
     fi
 fi
 
