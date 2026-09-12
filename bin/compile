@@ -152,11 +152,25 @@ echo "✓ PHP ${PHP_VERSION} CLI downloaded"
 echo "Setting up library compatibility layer..."
 mkdir -p "$INSTALL_DIR/lib"
 
-# Dereference symlinks and copy actual library files
-for lib_path in /usr/lib/x86_64-linux-gnu/libxml2.so* /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/libcrypto.so*; do
+# Try to download libxml2 from Ubuntu Jammy repos (same version PHP was built against)
+echo "Attempting to download libxml2 from Ubuntu Jammy repository..."
+UBUNTU_LIBXML2_URL="http://archive.ubuntu.com/ubuntu/pool/main/l/libxml2/libxml2_2.9.13+dfsg-1ubuntu0.3_amd64.deb"
+if curl -fsSL --head "$UBUNTU_LIBXML2_URL" 2>/dev/null | head -1 | grep -q "200"; then
+    echo "Found Ubuntu Jammy libxml2, downloading..."
+    if curl -fsSL "$UBUNTU_LIBXML2_URL" -o "/tmp/libxml2.deb"; then
+        mkdir -p /tmp/libxml2-extracted
+        dpkg -x "/tmp/libxml2.deb" /tmp/libxml2-extracted 2>/dev/null || true
+        if [ -d "/tmp/libxml2-extracted/usr/lib" ]; then
+            cp -r /tmp/libxml2-extracted/usr/lib/x86_64-linux-gnu/libxml2* "$INSTALL_DIR/lib/" 2>/dev/null || true
+            echo "✓ Libxml2 from Ubuntu Jammy installed"
+        fi
+    fi
+fi
+
+# Also copy other system libraries we might need
+for lib_path in /usr/lib/x86_64-linux-gnu/libssl.so* /usr/lib/x86_64-linux-gnu/libcrypto.so*; do
     if [ -e "$lib_path" ]; then
         lib_name=$(basename "$lib_path")
-        # If it's a symlink, resolve it to the actual file
         actual_lib=$(readlink -f "$lib_path" 2>/dev/null || echo "$lib_path")
         if [ -f "$actual_lib" ]; then
             cp "$actual_lib" "$INSTALL_DIR/lib/$lib_name" 2>/dev/null || true
@@ -164,19 +178,9 @@ for lib_path in /usr/lib/x86_64-linux-gnu/libxml2.so* /usr/lib/x86_64-linux-gnu/
     fi
 done
 
-# For version compatibility: copy the actual libxml2 library file as libxml2.so.2
-# First find the actual library file (not a symlink)
-if [ -d "/usr/lib/x86_64-linux-gnu" ]; then
-    actual_libxml2=$(find /usr/lib/x86_64-linux-gnu -name "libxml2.so*" -type f | head -1)
-    if [ ! -z "$actual_libxml2" ]; then
-        echo "Copying actual libxml2 library: $actual_libxml2"
-        cp "$actual_libxml2" "$INSTALL_DIR/lib/libxml2.so.2" 2>/dev/null || true
-    fi
-fi
-
 # List what we copied for debugging
 echo "Libraries in compatibility layer:"
-ls -1 "$INSTALL_DIR/lib/" 2>/dev/null | head -10 || echo "  (none)"
+ls -1 "$INSTALL_DIR/lib/" 2>/dev/null | head -15 || echo "  (none)"
 
 # Attempt to verify PHP works (with library path set)
 export LD_LIBRARY_PATH="$INSTALL_DIR/lib:$LD_LIBRARY_PATH"
