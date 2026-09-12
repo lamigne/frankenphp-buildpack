@@ -13,48 +13,74 @@ This buildpack provides a complete, self-contained FrankenPHP deployment solutio
 
 ## Installation
 
-### 1. Create `.buildpacks` file in your app:
+### 1. Create `Aptfile` in your app root
+
+Copy [example.Aptfile](example.Aptfile) to install PHP CLI:
+
+```bash
+cp example.Aptfile Aptfile
+```
+
+The minimal Aptfile is:
+```
+php-cli
+```
+
+### 2. Create `.buildpacks` file in your app:
+
+Copy [example.buildpacks](example.buildpacks):
 
 ```
+https://github.com/scalingo/buildpack-apt
 https://github.com/YOUR_USERNAME/frankenphp-buildpack
 ```
 
-### 2. Commit and deploy:
+**Important:** Order matters! apt buildpack must come **before** FrankenPHP buildpack.
+
+### 3. Commit and deploy:
 
 ```bash
-git add .buildpacks
-git commit -m "Use FrankenPHP buildpack"
+git add .buildpacks Aptfile
+git commit -m "Use FrankenPHP buildpack with apt for PHP CLI"
 git push scalingo main
 ```
 
 ## How It Works
 
+The buildpack uses a **hybrid approach** with two buildpacks:
+
+### 1. APT Buildpack (runs first)
+- Reads `Aptfile` from your app
+- Installs system packages (e.g., `php-cli`)
+
+### 2. FrankenPHP Buildpack (runs second)
 The buildpack consists of three scripts:
 
-1. **`bin/detect`** — Detects FrankenPHP projects (checks for `Caddyfile` + `composer.json`)
-2. **`bin/compile`** — 
-   - Detects system architecture and libc type
-   - Downloads FrankenPHP binary from GitHub releases
-   - Downloads and installs Composer
-   - Runs `composer install --no-dev --optimize-autoloader`
-   - Creates application directories (storage, bootstrap/cache for Laravel)
-3. **`bin/release`** — Specifies the default process: `frankenphp run --config /app/Caddyfile`
+- **`bin/detect`** — Detects FrankenPHP projects (checks for `Caddyfile` + `composer.json`)
+- **`bin/compile`** — 
+  - Verifies PHP CLI is available (from apt buildpack)
+  - Detects system architecture and libc type
+  - Downloads FrankenPHP binary from GitHub releases
+  - Downloads and installs Composer
+  - Runs `composer install --no-dev --optimize-autoloader`
+  - Creates application directories (storage, bootstrap/cache for Laravel)
+- **`bin/release`** — Specifies the default process: `frankenphp run --config /app/Caddyfile`
 
 ## Build Process
 
-When you deploy with this buildpack:
+When you deploy with both buildpacks:
 
 ```
 git push scalingo main
   ↓
-Scalingo detects Caddyfile + composer.json
+1. APT Buildpack: Install packages from Aptfile (php-cli, etc.)
   ↓
-FrankenPHP buildpack runs
+2. FrankenPHP Buildpack detects Caddyfile + composer.json
   ↓
-1. Download FrankenPHP binary (latest release)
-2. Download Composer
-3. Run: composer install --no-dev --optimize-autoloader
-4. Setup app directories
+3. Download FrankenPHP binary (latest release)
+4. Download Composer
+5. Run: php composer install --no-dev --optimize-autoloader
+6. Setup app directories
   ↓
 Application starts with: frankenphp run --config /app/Caddyfile
 ```
@@ -65,7 +91,8 @@ Your FrankenPHP app needs:
 
 ```
 your-app/
-├── .buildpacks         # Points to this buildpack (required)
+├── .buildpacks         # Points to both buildpacks (required)
+├── Aptfile             # APT packages (php-cli, etc.) (required)
 ├── Caddyfile           # Caddy web server config (required)
 ├── composer.json       # PHP dependencies (required)
 ├── composer.lock       # Locked versions

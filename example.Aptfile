@@ -1,0 +1,11 @@
+# Aptfile for FrankenPHP on Scalingo
+# Copy this to your app as 'Aptfile'
+
+# PHP CLI (required for composer during build)
+php-cli
+
+# Optional: additional PHP extensions if needed
+# php-curl
+# php-mbstring
+# php-xml
+# php-zip
