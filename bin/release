@@ -1,12 +1,6 @@
 #!/bin/bash
-set -e
-
-BUILD_DIR=$1
-
 cat <<EOF
 ---
 default_process_types:
-  web: frankenphp run --config /app/Caddyfile
+  web: /usr/local/bin/frankenphp run --config /app/Caddyfile
 EOF
-
-exit 0

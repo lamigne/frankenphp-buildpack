@@ -5,8 +5,23 @@ BUILD_DIR=$1
 CACHE_DIR=$2
 ENV_DIR=$3
 
+cd "$BUILD_DIR"
+
 echo "-----> FrankenPHP Buildpack"
 echo "-----> Detected Dockerfile"
-echo "-----> Scalingo will build the Docker image automatically"
 
+if [ ! -f "Dockerfile" ]; then
+    echo "ERROR: Dockerfile not found in build directory"
+    exit 1
+fi
+
+echo "-----> Building Docker image from Dockerfile..."
+docker build -t frankenphp-app .
+
+if [ $? -ne 0 ]; then
+    echo "ERROR: Docker build failed"
+    exit 1
+fi
+
+echo "-----> Docker image built successfully"
 exit 0
