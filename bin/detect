@@ -1,9 +1,10 @@
 #!/bin/bash
-# Detect if Dockerfile exists - if yes, use this buildpack
-# This prevents PHP buildpack from auto-detecting composer.json
+set -e
 
-if [[ -f "Dockerfile" ]]; then
-    echo "Docker"
+BUILD_DIR=$1
+
+if [[ -f "$BUILD_DIR/Dockerfile" ]]; then
+    echo "FrankenPHP"
     exit 0
 fi
 

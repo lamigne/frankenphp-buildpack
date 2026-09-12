@@ -1,14 +1,12 @@
 #!/bin/bash
-# Docker buildpack compile script
-# Scalingo will handle docker build automatically with this buildpack present
+set -e
 
 BUILD_DIR=$1
 CACHE_DIR=$2
 ENV_DIR=$3
 
-echo "-----> Docker buildpack detected"
-echo "-----> Using Dockerfile for application build"
-echo "-----> Dockerfile will be built by Scalingo's Docker builder"
+echo "-----> FrankenPHP Buildpack"
+echo "-----> Detected Dockerfile"
+echo "-----> Scalingo will build the Docker image automatically"
 
-# Exit successfully - Scalingo's Docker builder handles the rest
 exit 0
