@@ -110,6 +110,48 @@ The Procfile takes precedence over the buildpack's default command.
 
 Place a `php.ini` file in your app root. FrankenPHP will use it if found.
 
+### PHP Thread Pool Sizing
+
+FrankenPHP defaults to `2 x CPUs` PHP threads. On Scalingo, containers see every
+core of the host and have no CPU quota (only a CPU *priority* per size), so an
+S container on an 8-core host would start 16 threads while having 256 MB of RAM
+for all of them. Memory, not CPU, is the real limit.
+
+At every container boot, the buildpack's `/app/.profile.d/frankenphp.sh` derives
+a thread pool from `CONTAINER_MEMORY` (injected by Scalingo) and exports:
+
+| Env var | Rule |
+|---|---|
+| `FRANKENPHP_NUM_THREADS` | always-on threads: `RAM / 64 MB`, min 2, max `2 x CPUs` |
+| `FRANKENPHP_MAX_THREADS` | burst ceiling: `RAM / 32 MB`, max `4 x CPUs`, never below `num_threads` |
+
+Which gives, on an 8-core host:
+
+| Container size | RAM | `num_threads` | `max_threads` |
+|---|---|---|---|
+| S | 256 MB | 4 | 8 |
+| M | 512 MB | 8 | 16 |
+| L | 1 GB | 16 | 32 |
+| XL and above | 2 GB+ | 16 (CPU cap) | 32 (CPU cap) |
+
+Reference the values in your Caddyfile; the fallbacks only apply outside
+Scalingo, where `CONTAINER_MEMORY` is not set:
+
+```
+{
+	frankenphp {
+		num_threads {$FRANKENPHP_NUM_THREADS:4}
+		max_threads {$FRANKENPHP_MAX_THREADS:8}
+	}
+}
+```
+
+To override, set `FRANKENPHP_NUM_THREADS` and/or `FRANKENPHP_MAX_THREADS` on the
+app (`scalingo env-set`). Values you set are kept as-is; the script only fills
+in the missing one and raises `max_threads` to `num_threads` if needed. The
+64 MB budget per thread is conservative for a typical Symfony/Laravel request
+(20-40 MB); lower it in the script if your app is lighter.
+
 ### Monitoring with Ember
 
 The buildpack also installs [Ember](https://github.com/alexandre-daubois/ember),
