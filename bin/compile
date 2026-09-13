@@ -59,6 +59,51 @@ fi
 chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed"
 
+# Ember: real-time monitoring for Caddy/FrankenPHP (https://github.com/alexandre-daubois/ember).
+# Installed alongside frankenphp so a `tcp` process can run `ember --daemon`
+# to aggregate metrics from all web containers. Opt out with EMBER_INSTALL=false,
+# pin a version with EMBER_VERSION (e.g. 1.6.1).
+EMBER_INSTALL="true"
+[ -f "$ENV_DIR/EMBER_INSTALL" ] && EMBER_INSTALL=$(cat "$ENV_DIR/EMBER_INSTALL")
+
+if [ "$EMBER_INSTALL" != "false" ]; then
+    echo "-----> Installing Ember..."
+
+    EMBER_VERSION=""
+    [ -f "$ENV_DIR/EMBER_VERSION" ] && EMBER_VERSION=$(cat "$ENV_DIR/EMBER_VERSION")
+    if [ -z "$EMBER_VERSION" ]; then
+        # Resolve the latest tag from the releases redirect (no GitHub API rate limit)
+        EMBER_VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            https://github.com/alexandre-daubois/ember/releases/latest | sed 's#.*/tag/v##')
+    fi
+
+    case "$ARCH" in
+        x86_64)  EMBER_ARCH="amd64" ;;
+        aarch64) EMBER_ARCH="arm64" ;;
+    esac
+
+    EMBER_ARCHIVE="ember_${EMBER_VERSION}_linux_${EMBER_ARCH}.tar.gz"
+    EMBER_BASE_URL="https://github.com/alexandre-daubois/ember/releases/download/v${EMBER_VERSION}"
+    EMBER_TMP=$(mktemp -d)
+
+    if curl -fsSL "$EMBER_BASE_URL/$EMBER_ARCHIVE" -o "$EMBER_TMP/$EMBER_ARCHIVE" \
+        && curl -fsSL "$EMBER_BASE_URL/checksums.txt" -o "$EMBER_TMP/checksums.txt"; then
+        expected=$(awk -v f="$EMBER_ARCHIVE" '$2 == f {print $1}' "$EMBER_TMP/checksums.txt")
+        actual=$(sha256sum "$EMBER_TMP/$EMBER_ARCHIVE" | awk '{print $1}')
+        if [ -n "$expected" ] && [ "$expected" = "$actual" ]; then
+            tar -xzf "$EMBER_TMP/$EMBER_ARCHIVE" -C "$EMBER_TMP" ember
+            mv "$EMBER_TMP/ember" "$INSTALL_DIR/ember"
+            chmod +x "$INSTALL_DIR/ember"
+            echo "✓ Ember ${EMBER_VERSION} installed"
+        else
+            echo "⚠ Warning: Ember checksum mismatch, skipping install"
+        fi
+    else
+        echo "⚠ Warning: Failed to download Ember ${EMBER_VERSION}, skipping install"
+    fi
+    rm -rf "$EMBER_TMP"
+fi
+
 # PHP CLI and Composer are installed and run by the PHP buildpack
 # Dependencies should already be installed in vendor/
 echo "-----> Verifying PHP dependencies..."

@@ -9,24 +9,13 @@
 	}
 }
 
-:8080 {
+# Scalingo assigns the public port through $PORT; fall back to 8080 locally.
+:{$PORT:8080} {
 	root * /app/public
 
 	encode gzip
 
-	# Route all requests to index.php (Laravel example)
-	@notfile {
-		not path /favicon.ico /robots.txt
-		file {
-			try_files {path} /index.php
-		}
-	}
-
-	rewrite @notfile /index.php
-
-	php_fastcgi localhost:9000 {
-		root /app/public
-	}
-
-	file_server
+	# Serve static files directly, route everything else to index.php,
+	# and execute PHP in-process (no PHP-FPM needed with FrankenPHP)
+	php_server
 }

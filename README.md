@@ -110,6 +110,26 @@ The Procfile takes precedence over the buildpack's default command.
 
 Place a `php.ini` file in your app root. FrankenPHP will use it if found.
 
+### Monitoring with Ember
+
+The buildpack also installs [Ember](https://github.com/alexandre-daubois/ember),
+a real-time monitor for Caddy/FrankenPHP, as `/app/bin/ember`.
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `EMBER_INSTALL` | `true` | Set to `false` to skip the install |
+| `EMBER_VERSION` | latest release | Pin a version, e.g. `1.6.1` |
+
+Ember talks to Caddy's admin API, which only listens on loopback. Two typical
+setups on Scalingo:
+
+- **Single web container**: proxy the admin API under a path with basic auth in
+  your Caddyfile and run `ember --addr https://user:pass@your-app/…` locally.
+- **Several web containers**: run `ember --daemon --expose :$PORT` in a `tcp`
+  process, polling each node over a Private Network, and read the aggregated
+  Prometheus endpoint through the TCP Gateway addon. The router load-balances
+  requests, so a single public path cannot target one node.
+
 ## Troubleshooting
 
 ### Build fails: "FrankenPHP binary not found"
@@ -125,6 +145,24 @@ PHP dependency installation failed. Check:
 1. `composer.json` is valid
 2. All dependencies are available
 3. Disk space available during build
+
+### Deploy fails: "took more than 60 seconds to boot"
+
+Scalingo assigns the port your web container must listen on through the `PORT`
+environment variable and waits for something to bind to it. If your Caddyfile
+hardcodes a port (for example `:8080`), FrankenPHP starts fine but Scalingo
+never sees it and kills the container after 60 seconds.
+
+Use the `PORT` placeholder in your site address instead:
+
+```
+:{$PORT:8080} {
+	root * /app/public
+	php_server
+}
+```
+
+The `:8080` after the colon is only a fallback for running locally.
 
 ### App starts but crashes
 
