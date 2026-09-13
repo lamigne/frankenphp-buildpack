@@ -117,10 +117,34 @@ fi
 mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
 chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
 
-# Create profile.d script to set PATH for FrankenPHP at runtime
+# Create profile.d script, sourced by Scalingo at every container boot:
+# sets PATH and sizes the PHP thread pool from the container's resources.
 mkdir -p /app/.profile.d
 cat > /app/.profile.d/frankenphp.sh <<'PROFILE_EOF'
 export PATH="/app/bin:$PATH"
+
+# Size the PHP thread pool from the container's memory, not the host's CPU
+# count. Scalingo containers see every host core and have no CPU quota, so
+# FrankenPHP's default (2 x CPUs) ignores the real limit: RAM. Budget ~64 MB
+# per always-on thread and ~32 MB per burst thread, capped by CPU count.
+# Reference the result in the Caddyfile:
+#   frankenphp { num_threads {$FRANKENPHP_NUM_THREADS:4} max_threads {$FRANKENPHP_MAX_THREADS:8} }
+# Override either value by setting FRANKENPHP_NUM_THREADS / FRANKENPHP_MAX_THREADS.
+if [ -n "$CONTAINER_MEMORY" ]; then
+    _mem_mb=$((CONTAINER_MEMORY / 1024 / 1024))
+    _cpus=$(nproc 2>/dev/null || echo 2)
+    _num=$((_mem_mb / 64))
+    _max=$((_mem_mb / 32))
+    [ "$_num" -lt 2 ] && _num=2
+    [ "$_num" -gt $((_cpus * 2)) ] && _num=$((_cpus * 2))
+    [ "$_max" -gt $((_cpus * 4)) ] && _max=$((_cpus * 4))
+    : "${FRANKENPHP_NUM_THREADS:=$_num}"
+    : "${FRANKENPHP_MAX_THREADS:=$_max}"
+    # FrankenPHP requires max_threads >= num_threads
+    [ "$FRANKENPHP_MAX_THREADS" -lt "$FRANKENPHP_NUM_THREADS" ] && FRANKENPHP_MAX_THREADS=$FRANKENPHP_NUM_THREADS
+    export FRANKENPHP_NUM_THREADS FRANKENPHP_MAX_THREADS
+    unset _mem_mb _cpus _num _max
+fi
 PROFILE_EOF
 chmod +x /app/.profile.d/frankenphp.sh
 

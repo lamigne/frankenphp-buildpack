@@ -3,6 +3,12 @@
 
 {
 	admin off
+	# Thread pool sized by the buildpack from CONTAINER_MEMORY (see README);
+	# fallbacks match an S container.
+	frankenphp {
+		num_threads {$FRANKENPHP_NUM_THREADS:4}
+		max_threads {$FRANKENPHP_MAX_THREADS:8}
+	}
 	log {
 		output stdout
 		format console
