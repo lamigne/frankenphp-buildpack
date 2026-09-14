@@ -142,7 +142,11 @@ if [ -n "$CONTAINER_MEMORY" ]; then
     : "${FRANKENPHP_MAX_THREADS:=$_max}"
     # FrankenPHP requires max_threads >= num_threads
     [ "$FRANKENPHP_MAX_THREADS" -lt "$FRANKENPHP_NUM_THREADS" ] && FRANKENPHP_MAX_THREADS=$FRANKENPHP_NUM_THREADS
-    export FRANKENPHP_NUM_THREADS FRANKENPHP_MAX_THREADS
+    # Worker mode (optional, see README): FrankenPHP requires num_threads to be
+    # strictly greater than the worker count, so keep one regular thread.
+    : "${FRANKENPHP_WORKER_THREADS:=$((FRANKENPHP_NUM_THREADS - 1))}"
+    [ "$FRANKENPHP_WORKER_THREADS" -lt 1 ] && FRANKENPHP_WORKER_THREADS=1
+    export FRANKENPHP_NUM_THREADS FRANKENPHP_MAX_THREADS FRANKENPHP_WORKER_THREADS
     unset _mem_mb _cpus _num _max
 fi
 PROFILE_EOF

@@ -124,15 +124,16 @@ a thread pool from `CONTAINER_MEMORY` (injected by Scalingo) and exports:
 |---|---|
 | `FRANKENPHP_NUM_THREADS` | always-on threads: `RAM / 64 MB`, min 2, max `2 x CPUs` |
 | `FRANKENPHP_MAX_THREADS` | burst ceiling: `RAM / 32 MB`, max `4 x CPUs`, never below `num_threads` |
+| `FRANKENPHP_WORKER_THREADS` | `num_threads - 1` (FrankenPHP requires `num_threads` to be strictly greater than the worker count) |
 
 Which gives, on an 8-core host:
 
-| Container size | RAM | `num_threads` | `max_threads` |
-|---|---|---|---|
-| S | 256 MB | 4 | 8 |
-| M | 512 MB | 8 | 16 |
-| L | 1 GB | 16 | 32 |
-| XL and above | 2 GB+ | 16 (CPU cap) | 32 (CPU cap) |
+| Container size | RAM | `num_threads` | `max_threads` | `worker` threads |
+|---|---|---|---|---|
+| S | 256 MB | 4 | 8 | 3 |
+| M | 512 MB | 8 | 16 | 7 |
+| L | 1 GB | 16 | 32 | 15 |
+| XL and above | 2 GB+ | 16 (CPU cap) | 32 (CPU cap) | 15 |
 
 Reference the values in your Caddyfile; the fallbacks only apply outside
 Scalingo, where `CONTAINER_MEMORY` is not set:
@@ -142,15 +143,30 @@ Scalingo, where `CONTAINER_MEMORY` is not set:
 	frankenphp {
 		num_threads {$FRANKENPHP_NUM_THREADS:4}
 		max_threads {$FRANKENPHP_MAX_THREADS:8}
+		# optional: recycle threads after N requests
+		max_requests {$FRANKENPHP_MAX_REQUESTS:500}
+	}
+}
+
+:{$PORT:8080} {
+	root * /app/public
+	php_server {
+		# optional worker mode (Symfony >= 8.1 supports it out of the box via
+		# symfony/runtime; Laravel needs Octane)
+		worker {
+			file /app/public/index.php
+			num {$FRANKENPHP_WORKER_THREADS:3}
+		}
 	}
 }
 ```
 
-To override, set `FRANKENPHP_NUM_THREADS` and/or `FRANKENPHP_MAX_THREADS` on the
-app (`scalingo env-set`). Values you set are kept as-is; the script only fills
-in the missing one and raises `max_threads` to `num_threads` if needed. The
-64 MB budget per thread is conservative for a typical Symfony/Laravel request
-(20-40 MB); lower it in the script if your app is lighter.
+To override, set any of `FRANKENPHP_NUM_THREADS`, `FRANKENPHP_MAX_THREADS` or
+`FRANKENPHP_WORKER_THREADS` on the app (`scalingo env-set`). Values you set are
+kept as-is; the script only fills in the missing ones and raises `max_threads`
+to `num_threads` if needed. The 64 MB budget per thread is conservative for a
+typical Symfony/Laravel request (20-40 MB); lower it in the script if your app
+is lighter.
 
 ### Monitoring with Ember
 
