@@ -1,0 +1,22 @@
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS
+Thumbs.db
+
+# Build artifacts
+vendor/
+node_modules/
+.env
+.env.local
+
+# Temporary files
+*.tmp
+.cache/
+
+.claude

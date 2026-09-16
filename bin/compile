@@ -1,0 +1,156 @@
+#!/bin/bash
+set -e
+
+BUILD_DIR=$1
+CACHE_DIR=$2
+ENV_DIR=$3
+
+cd "$BUILD_DIR"
+
+echo "-----> FrankenPHP Buildpack"
+echo "-----> Installing FrankenPHP and dependencies..."
+
+# Parse composer.json for PHP version
+PHP_VERSION="8.5"
+if [ -f "composer.json" ]; then
+    # Try jq first, fall back to grep
+    if command -v jq >/dev/null 2>&1; then
+        php_requirement=$(jq -r '.require.php // empty' composer.json 2>/dev/null)
+    else
+        php_requirement=$(grep -o '"php"[[:space:]]*:[[:space:]]*"[^"]*' composer.json 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
+    fi
+
+    if [ ! -z "$php_requirement" ]; then
+        extracted_version=$(echo "$php_requirement" | grep -oE '[89]\.[0-9]+' | head -1)
+        if [ ! -z "$extracted_version" ]; then
+            PHP_VERSION="$extracted_version"
+        fi
+    fi
+fi
+
+echo "-----> Detected PHP version requirement: $PHP_VERSION"
+
+# Architecture
+ARCH=$(uname -m)
+if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
+    echo "ERROR: Unsupported architecture: $ARCH"
+    exit 1
+fi
+
+if getconf GNU_LIBC_VERSION >/dev/null 2>&1; then
+    LIBC="gnu"
+else
+    LIBC="musl"
+fi
+
+INSTALL_DIR="$BUILD_DIR/bin"
+mkdir -p "$INSTALL_DIR"
+
+# Download FrankenPHP
+echo "-----> Downloading FrankenPHP (${ARCH}-${LIBC})..."
+BINARY_NAME="frankenphp-linux-${ARCH}-${LIBC}"
+BINARY_URL="https://github.com/dunglas/frankenphp/releases/latest/download/${BINARY_NAME}"
+
+if ! curl -fsSL "$BINARY_URL" -o "$INSTALL_DIR/frankenphp"; then
+    echo "ERROR: Failed to download FrankenPHP"
+    exit 1
+fi
+
+chmod +x "$INSTALL_DIR/frankenphp"
+echo "✓ FrankenPHP installed"
+
+# Ember: real-time monitoring for Caddy/FrankenPHP (https://github.com/alexandre-daubois/ember).
+# Installed alongside frankenphp so a `tcp` process can run `ember --daemon`
+# to aggregate metrics from all web containers. Opt out with EMBER_INSTALL=false,
+# pin a version with EMBER_VERSION (e.g. 1.6.1).
+EMBER_INSTALL="true"
+[ -f "$ENV_DIR/EMBER_INSTALL" ] && EMBER_INSTALL=$(cat "$ENV_DIR/EMBER_INSTALL")
+
+if [ "$EMBER_INSTALL" != "false" ]; then
+    echo "-----> Installing Ember..."
+
+    EMBER_VERSION=""
+    [ -f "$ENV_DIR/EMBER_VERSION" ] && EMBER_VERSION=$(cat "$ENV_DIR/EMBER_VERSION")
+    if [ -z "$EMBER_VERSION" ]; then
+        # Resolve the latest tag from the releases redirect (no GitHub API rate limit)
+        EMBER_VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' \
+            https://github.com/alexandre-daubois/ember/releases/latest | sed 's#.*/tag/v##')
+    fi
+
+    case "$ARCH" in
+        x86_64)  EMBER_ARCH="amd64" ;;
+        aarch64) EMBER_ARCH="arm64" ;;
+    esac
+
+    EMBER_ARCHIVE="ember_${EMBER_VERSION}_linux_${EMBER_ARCH}.tar.gz"
+    EMBER_BASE_URL="https://github.com/alexandre-daubois/ember/releases/download/v${EMBER_VERSION}"
+    EMBER_TMP=$(mktemp -d)
+
+    if curl -fsSL "$EMBER_BASE_URL/$EMBER_ARCHIVE" -o "$EMBER_TMP/$EMBER_ARCHIVE" \
+        && curl -fsSL "$EMBER_BASE_URL/checksums.txt" -o "$EMBER_TMP/checksums.txt"; then
+        expected=$(awk -v f="$EMBER_ARCHIVE" '$2 == f {print $1}' "$EMBER_TMP/checksums.txt")
+        actual=$(sha256sum "$EMBER_TMP/$EMBER_ARCHIVE" | awk '{print $1}')
+        if [ -n "$expected" ] && [ "$expected" = "$actual" ]; then
+            tar -xzf "$EMBER_TMP/$EMBER_ARCHIVE" -C "$EMBER_TMP" ember
+            mv "$EMBER_TMP/ember" "$INSTALL_DIR/ember"
+            chmod +x "$INSTALL_DIR/ember"
+            echo "✓ Ember ${EMBER_VERSION} installed"
+        else
+            echo "⚠ Warning: Ember checksum mismatch, skipping install"
+        fi
+    else
+        echo "⚠ Warning: Failed to download Ember ${EMBER_VERSION}, skipping install"
+    fi
+    rm -rf "$EMBER_TMP"
+fi
+
+# PHP CLI and Composer are installed and run by the PHP buildpack
+# Dependencies should already be installed in vendor/
+echo "-----> Verifying PHP dependencies..."
+if [ -d "$BUILD_DIR/vendor" ] && [ -f "$BUILD_DIR/vendor/autoload.php" ]; then
+    echo "✓ PHP dependencies installed (vendor/ found)"
+else
+    echo "⚠ Warning: vendor/ not found - ensure PHP buildpack ran first and install succeeded"
+fi
+
+# Create application directories
+mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
+chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
+
+# Create profile.d script, sourced by Scalingo at every container boot:
+# sets PATH and sizes the PHP thread pool from the container's resources.
+mkdir -p /app/.profile.d
+cat > /app/.profile.d/frankenphp.sh <<'PROFILE_EOF'
+export PATH="/app/bin:$PATH"
+
+# Size the PHP thread pool from the container's memory, not the host's CPU
+# count. Scalingo containers see every host core and have no CPU quota, so
+# FrankenPHP's default (2 x CPUs) ignores the real limit: RAM. Budget ~64 MB
+# per always-on thread and ~32 MB per burst thread, capped by CPU count.
+# Reference the result in the Caddyfile:
+#   frankenphp { num_threads {$FRANKENPHP_NUM_THREADS:4} max_threads {$FRANKENPHP_MAX_THREADS:8} }
+# Override either value by setting FRANKENPHP_NUM_THREADS / FRANKENPHP_MAX_THREADS.
+if [ -n "$CONTAINER_MEMORY" ]; then
+    _mem_mb=$((CONTAINER_MEMORY / 1024 / 1024))
+    _cpus=$(nproc 2>/dev/null || echo 2)
+    _num=$((_mem_mb / 64))
+    _max=$((_mem_mb / 32))
+    [ "$_num" -lt 2 ] && _num=2
+    [ "$_num" -gt $((_cpus * 2)) ] && _num=$((_cpus * 2))
+    [ "$_max" -gt $((_cpus * 4)) ] && _max=$((_cpus * 4))
+    : "${FRANKENPHP_NUM_THREADS:=$_num}"
+    : "${FRANKENPHP_MAX_THREADS:=$_max}"
+    # FrankenPHP requires max_threads >= num_threads
+    [ "$FRANKENPHP_MAX_THREADS" -lt "$FRANKENPHP_NUM_THREADS" ] && FRANKENPHP_MAX_THREADS=$FRANKENPHP_NUM_THREADS
+    # Worker mode (optional, see README): FrankenPHP requires num_threads to be
+    # strictly greater than the worker count, so keep one regular thread.
+    : "${FRANKENPHP_WORKER_THREADS:=$((FRANKENPHP_NUM_THREADS - 1))}"
+    [ "$FRANKENPHP_WORKER_THREADS" -lt 1 ] && FRANKENPHP_WORKER_THREADS=1
+    export FRANKENPHP_NUM_THREADS FRANKENPHP_MAX_THREADS FRANKENPHP_WORKER_THREADS
+    unset _mem_mb _cpus _num _max
+fi
+PROFILE_EOF
+chmod +x /app/.profile.d/frankenphp.sh
+
+echo "-----> FrankenPHP buildpack complete!"
+exit 0

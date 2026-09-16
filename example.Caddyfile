@@ -1,0 +1,127 @@
+# Example Caddyfile for FrankenPHP + Mercure + Ember on Scalingo.
+# Copy this to your FrankenPHP app and name it 'Caddyfile'.
+# See README.md for the details of each block.
+
+{
+	# Admin API on loopback only; exposed to Ember through /ember-admin below
+	admin localhost:2019
+	# Collect HTTP metrics (opt-in since Caddy 2.8) so Ember has data to show
+	metrics {
+		per_host
+	}
+	# PHP thread pool. FrankenPHP defaults to 2 x host CPUs, which ignores the
+	# container's RAM. The buildpack's .profile.d script derives these from
+	# CONTAINER_MEMORY at boot; the fallbacks match an S container.
+	frankenphp {
+		num_threads {$FRANKENPHP_NUM_THREADS:4}
+		max_threads {$FRANKENPHP_MAX_THREADS:8}
+		# Recycle every thread (worker or not) after this many requests to
+		# contain leaks. Logged as "max requests reached, restarting" (DEBUG).
+		max_requests {$FRANKENPHP_MAX_REQUESTS:500}
+	}
+	auto_https off
+	log {
+		output stdout
+		format console
+		# Ember polls the admin API several times per second; its INFO
+		# "received request" lines go to the dedicated logger below.
+		# frankenphp has its own DEBUG logger so worker lifecycle is visible.
+		exclude admin.api frankenphp
+	}
+	log admin {
+		include admin.api
+		level WARN
+		output stdout
+		format console
+	}
+	log frankenphp {
+		include frankenphp
+		# DEBUG shows worker starts/restarts ("starting", "restarting",
+		# "max requests reached, restarting"); crashes are WARN anyway.
+		level {$FRANKENPHP_LOG_LEVEL:DEBUG}
+		output stdout
+		format console
+	}
+}
+
+# Scalingo assigns the public port through $PORT; fall back to 8080 locally.
+:{$PORT:8080} {
+	bind 0.0.0.0
+	root * public
+	encode gzip
+
+	log {
+		output stdout
+		format console
+	}
+
+	header X-Content-Type-Options nosniff
+	header X-Frame-Options DENY
+
+	# Embedded Mercure hub (SSE) at /.well-known/mercure. Visitors subscribe to
+	# /queue/{slug} anonymously; the app publishes with a JWT signed by the same
+	# secret. The default must match MERCURE_JWT_SECRET in .env; set
+	# MERCURE_JWT_SECRET in the environment to override both.
+	mercure {
+		publisher_jwt {$MERCURE_JWT_SECRET:!ChangeThisMercureHubJWTSecretKey!}
+		subscriber_jwt {$MERCURE_JWT_SECRET:!ChangeThisMercureHubJWTSecretKey!}
+		anonymous
+		# Scalingo's router closes idle ingress connections after 59s
+		heartbeat 30s
+		# In-memory transport: single container, no need for a bolt.db on disk
+		transport local
+	}
+
+	# Remote monitoring with Ember (https://github.com/alexandre-daubois/ember):
+	# proxies Caddy's admin API under /ember-admin, protected by basic auth.
+	# Set EMBER_PASSWORD_HASH (output of `frankenphp hash-password`) in the
+	# environment; the default is a hash of a random, discarded password so the
+	# endpoint stays locked until configured. The admin API can reconfigure the
+	# server, so pick a strong password.
+	#   ember --addr https://ember:<password>@<host>/ember-admin
+	handle_path /ember-admin/* {
+		# `route` keeps textual order (Caddy would otherwise sort log_skip
+		# before basic_auth): failed logins are logged, Ember's polling is not.
+		route {
+			basic_auth {
+				{$EMBER_USER:ember} {$EMBER_PASSWORD_HASH:$2a$14$2OBVCEzzn90dtayNjVF7HeOfrslQblvl.yME7.DhHPQ/HRTmCrlKG}
+			}
+			log_skip
+			reverse_proxy localhost:2019 {
+				# The admin API only accepts requests whose Host matches its listen address
+				header_up Host {upstream_hostport}
+			}
+		}
+	}
+
+	# Serve existing static files, route everything else to index.php, and
+	# execute PHP in-process.
+	php_server {
+		# Worker mode: Symfony is booted once per thread and kept in memory;
+		# symfony/runtime detects FRANKENPHP_WORKER and loops on
+		# frankenphp_handle_request(). FrankenPHP requires num_threads to be
+		# strictly greater than this, so the buildpack sets it to num_threads - 1.
+		worker {
+			name symfony
+			file public/index.php
+			num {$FRANKENPHP_WORKER_THREADS:3}
+		}
+	}
+}
+
+# Private-network listener for Ember (one-off container or the `tcp` process
+# running bin/ember-daemon, see README). Scalingo only routes $PORT publicly,
+# so this port is reachable solely from containers of the same Private
+# Network (WireGuard encrypted), hence no basic auth here. Nothing else is
+# served on it.
+:{$EMBER_PRIVATE_PORT:9000} {
+	bind 0.0.0.0
+
+	handle_path /ember-admin/* {
+		reverse_proxy localhost:2019 {
+			header_up Host {upstream_hostport}
+		}
+	}
+
+	respond 404
+}
