@@ -72,18 +72,20 @@ The buildpack applies when the app root contains both a `Caddyfile` and a
 
 ### `bin/release`
 
-Declares the default process types:
+Declares the default process type:
 
 ```yaml
 web: /app/bin/frankenphp run --config /app/Caddyfile
-tcp: /app/bin/ember-daemon
 ```
 
-A `Procfile` in your app overrides these. `tcp` is only useful for the
-[multi-container Ember setup](#option-3-several-web-containers-ember-daemon-in-a-tcp-process)
-and expects a `bin/ember-daemon` script **provided by your app**; new process
-types start at 0 containers, so it costs nothing until you `scalingo scale
-tcp:1`.
+A `Procfile` in your app overrides it, and is where you add other process
+types, e.g. the `tcp` process of the
+[multi-container Ember setup](#option-3-several-web-containers-ember-daemon-in-a-tcp-process):
+
+```
+web: /app/bin/frankenphp run --config /app/Caddyfile
+tcp: /app/bin/ember-daemon
+```
 
 ## Project structure
 
@@ -93,8 +95,8 @@ your-app/
 ├── Caddyfile           # FrankenPHP / Caddy config (required, see example.Caddyfile)
 ├── composer.json       # PHP dependencies (required)
 ├── composer.lock
-├── Procfile            # optional, overrides the default process types
-├── bin/ember-daemon    # optional, only for the tcp process (see Ember section)
+├── Procfile            # optional, overrides/extends the default web process
+├── bin/ember-daemon    # optional, tcp process of the Ember daemon setup
 ├── public/             # web root (index.php, assets)
 └── src/ or app/        # your code
 ```
@@ -336,8 +338,8 @@ web container, which is how you can count them.
 
 #### Option 3: several web containers, Ember daemon in a `tcp` process
 
-For a permanent view of all nodes at once, run Ember headless in the `tcp`
-process type declared by the buildpack. It polls every web container over the
+For a permanent view of all nodes at once, run Ember headless in a `tcp`
+process type declared in your `Procfile`. It polls every web container over the
 Private Network and serves one aggregated Prometheus `/metrics` endpoint
 (labelled `ember_instance="web_1"`, `web_2`, ...) that the
 [TCP Gateway](https://doc.scalingo.com/addons/tcp-gateway) addon
@@ -349,7 +351,9 @@ Requirements:
 - Private Network + TCP Gateway addon on the app
 - the private listener from option 2 in the Caddyfile
 - `EMBER_METRICS_PASSWORD` set on the app (basic auth for `/metrics`)
-- a `bin/ember-daemon` script in your app (below), then `scalingo scale tcp:1`
+- a `bin/ember-daemon` script in your app (below) and a `Procfile` declaring
+  `tcp: /app/bin/ember-daemon` next to the `web` line, then
+  `scalingo scale tcp:1` (new process types start at 0 containers)
 
 Ember cannot change its target list at runtime, so the script re-resolves the
 number of web containers every 30 s and restarts Ember when it changes:
@@ -466,7 +470,8 @@ done
 
 </details>
 
-Make it executable (`chmod +x bin/ember-daemon`), commit, then:
+Make it executable (`chmod +x bin/ember-daemon`), add the `tcp` line to your
+`Procfile`, commit, then:
 
 ```bash
 scalingo --app your-app env-set EMBER_METRICS_PASSWORD="$(openssl rand -hex 16)"
