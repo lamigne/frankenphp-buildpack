@@ -46,18 +46,49 @@ fi
 INSTALL_DIR="$BUILD_DIR/bin"
 mkdir -p "$INSTALL_DIR"
 
-# Download FrankenPHP
-echo "-----> Downloading FrankenPHP (${ARCH}-${LIBC})..."
-BINARY_NAME="frankenphp-linux-${ARCH}-${LIBC}"
-BINARY_URL="https://github.com/dunglas/frankenphp/releases/latest/download/${BINARY_NAME}"
+# FrankenPHP version: pinned, so a build never picks up a new release unannounced. Override with
+# FRANKENPHP_VERSION (e.g. 1.13.5, with or without the leading "v"); "latest" follows the newest release.
+FRANKENPHP_DEFAULT_VERSION="1.13.5"
+FRANKENPHP_VERSION="$FRANKENPHP_DEFAULT_VERSION"
+[ -f "$ENV_DIR/FRANKENPHP_VERSION" ] && FRANKENPHP_VERSION=$(tr -d '[:space:]' < "$ENV_DIR/FRANKENPHP_VERSION")
+FRANKENPHP_VERSION="${FRANKENPHP_VERSION#v}"
+[ -z "$FRANKENPHP_VERSION" ] && FRANKENPHP_VERSION="$FRANKENPHP_DEFAULT_VERSION"
 
-if ! curl -fsSL "$BINARY_URL" -o "$INSTALL_DIR/frankenphp"; then
-    echo "ERROR: Failed to download FrankenPHP"
-    exit 1
+BINARY_NAME="frankenphp-linux-${ARCH}-${LIBC}"
+if [ "$FRANKENPHP_VERSION" = "latest" ]; then
+    BINARY_URL="https://github.com/php/frankenphp/releases/latest/download/${BINARY_NAME}"
+else
+    BINARY_URL="https://github.com/php/frankenphp/releases/download/v${FRANKENPHP_VERSION}/${BINARY_NAME}"
+fi
+
+# Build cache: the binary (~175 MB) is downloaded once per pinned version and reused by the next builds. "latest" is
+# never cached, its content changes under the same name.
+CACHED_BINARY=""
+if [ "$FRANKENPHP_VERSION" != "latest" ] && [ -n "$CACHE_DIR" ]; then
+    CACHED_BINARY="$CACHE_DIR/frankenphp/${FRANKENPHP_VERSION}/${BINARY_NAME}"
+fi
+
+if [ -n "$CACHED_BINARY" ] && [ -s "$CACHED_BINARY" ]; then
+    echo "-----> Using cached FrankenPHP ${FRANKENPHP_VERSION} (${ARCH}-${LIBC})"
+    cp "$CACHED_BINARY" "$INSTALL_DIR/frankenphp"
+else
+    echo "-----> Downloading FrankenPHP ${FRANKENPHP_VERSION} (${ARCH}-${LIBC})..."
+    if ! curl -fsSL "$BINARY_URL" -o "$INSTALL_DIR/frankenphp.part"; then
+        rm -f "$INSTALL_DIR/frankenphp.part"
+        echo "ERROR: Failed to download FrankenPHP ${FRANKENPHP_VERSION} from ${BINARY_URL}"
+        exit 1
+    fi
+    mv "$INSTALL_DIR/frankenphp.part" "$INSTALL_DIR/frankenphp"
+    if [ -n "$CACHED_BINARY" ]; then
+        # Only the current version is kept: the cache does not grow with every upgrade.
+        rm -rf "$CACHE_DIR/frankenphp"
+        mkdir -p "$(dirname "$CACHED_BINARY")"
+        cp "$INSTALL_DIR/frankenphp" "$CACHED_BINARY"
+    fi
 fi
 
 chmod +x "$INSTALL_DIR/frankenphp"
-echo "✓ FrankenPHP installed"
+echo "✓ FrankenPHP installed: $("$INSTALL_DIR/frankenphp" version 2>/dev/null | head -1 || echo "${FRANKENPHP_VERSION}")"
 
 # Ember: real-time monitoring for Caddy/FrankenPHP (https://github.com/alexandre-daubois/ember).
 # Installed alongside frankenphp so a `tcp` process can run `ember --daemon`
@@ -113,14 +144,11 @@ else
     echo "⚠ Warning: vendor/ not found - ensure PHP buildpack ran first and install succeeded"
 fi
 
-# Create application directories
-mkdir -p /app/storage /app/bootstrap/cache 2>/dev/null || true
-chmod -R 755 /app/storage /app/bootstrap/cache 2>/dev/null || true
-
 # Create profile.d script, sourced by Scalingo at every container boot:
 # sets PATH and sizes the PHP thread pool from the container's resources.
-mkdir -p /app/.profile.d
-cat > /app/.profile.d/frankenphp.sh <<'PROFILE_EOF'
+# Written into the build directory, which becomes /app in the image: at build time the app is not in /app.
+mkdir -p "$BUILD_DIR/.profile.d"
+cat > "$BUILD_DIR/.profile.d/frankenphp.sh" <<'PROFILE_EOF'
 export PATH="/app/bin:$PATH"
 
 # Size the PHP thread pool from the container's memory, not the host's CPU
@@ -150,7 +178,7 @@ if [ -n "$CONTAINER_MEMORY" ]; then
     unset _mem_mb _cpus _num _max
 fi
 PROFILE_EOF
-chmod +x /app/.profile.d/frankenphp.sh
+chmod +x "$BUILD_DIR/.profile.d/frankenphp.sh"
 
 echo "-----> FrankenPHP buildpack complete!"
 exit 0

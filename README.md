@@ -12,7 +12,7 @@ If you think this buildpack could be useful to others, feel free to ⭐️ the r
 
 | Binary                | Source                                                                                                                                                 | Notes                                                                                                      |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| `/app/bin/frankenphp` | latest [FrankenPHP release](https://github.com/dunglas/frankenphp/releases) (static build matching the host arch/libc, `linux-x86_64-gnu` on Scalingo) | Caddy + PHP in one process. Ships the [Mercure](https://mercure.rocks) hub and the `hash-password` command |
+| `/app/bin/frankenphp` | pinned [FrankenPHP release](https://github.com/php/frankenphp/releases) (`FRANKENPHP_VERSION`, see [Versions](#frankenphp-version)), build matching the host arch/libc, `linux-x86_64-gnu` on Scalingo | Caddy + PHP in one process. Ships the [Mercure](https://mercure.rocks) hub and the `hash-password` command |
 | `/app/bin/ember`      | latest [Ember release](https://github.com/alexandre-daubois/ember/releases), SHA-256 verified                                                          | Real-time TUI / Prometheus exporter for Caddy & FrankenPHP. Optional, see [Ember](#monitoring-with-ember)  |
 
 Both are added to `PATH` at container boot by `/app/.profile.d/frankenphp.sh`,
@@ -59,14 +59,15 @@ The buildpack applies when the app root contains both a `Caddyfile` and a
 
 1. Reads the PHP requirement from `composer.json` (informational, the PHP
    buildpack is the one installing PHP).
-2. Detects the architecture and libc, downloads the latest FrankenPHP binary
-   to `/app/bin/frankenphp`.
+2. Detects the architecture and libc and installs the pinned FrankenPHP
+   binary to `/app/bin/frankenphp`, from the build cache when that version was
+   already downloaded (see [FrankenPHP version](#frankenphp-version)).
 3. Installs Ember to `/app/bin/ember` (unless `EMBER_INSTALL=false`), verifying
    the archive against the release's `checksums.txt`.
 4. Warns if `vendor/autoload.php` is missing (the PHP buildpack did not run or
    `composer install` failed).
-5. Creates `storage/` and `bootstrap/cache/` (Laravel) if absent.
-6. Writes `/app/.profile.d/frankenphp.sh`, sourced at every container boot,
+5. Writes `.profile.d/frankenphp.sh` into the build directory (it becomes
+   `/app/.profile.d/frankenphp.sh` in the image), sourced at every container boot,
    which extends `PATH` and sizes the
    [PHP thread pool](#php-thread-pool-sizing).
 
@@ -124,8 +125,29 @@ Validate it locally before pushing:
 frankenphp validate --config Caddyfile
 ```
 
-FrankenPHP on Scalingo is always the latest release, which may be newer than
-your local install: directives deprecated remotely can still validate locally.
+Validate with the same FrankenPHP version as the one pinned on Scalingo
+(`frankenphp version`): directives deprecated in a newer release can still
+validate on an older local install.
+
+## FrankenPHP version
+
+The binary version is pinned: a build never picks up a new FrankenPHP release
+on its own. The default is the version tested with this buildpack (`1.13.5`);
+set `FRANKENPHP_VERSION` on the app to choose another one:
+
+```bash
+scalingo env-set FRANKENPHP_VERSION=1.13.5   # or v1.13.5
+scalingo env-set FRANKENPHP_VERSION=latest   # follow the newest release, unpinned
+```
+
+The change applies at the next deployment. A pinned version is downloaded once
+and kept in the Scalingo build cache (only the current version is kept), so the
+next builds skip the ~175 MB download; `latest` is downloaded at every build.
+
+The release ships its own PHP (8.5 for the 1.13 series), independent of the PHP
+CLI the PHP buildpack installs from `composer.json`: the web runs FrankenPHP's
+PHP, `scalingo run` and the build run the buildpack's. Check both with
+`frankenphp version` and `php -v`.
 
 ### Custom PHP configuration
 
@@ -496,10 +518,11 @@ scrape_configs:
 
 ### Build fails: "Failed to download FrankenPHP"
 
-The binary download from GitHub releases failed. Check the build logs
-(`scalingo deployment-logs`) and that
-https://github.com/dunglas/frankenphp/releases is reachable, then retry the
-deployment.
+The binary download from GitHub releases failed: `FRANKENPHP_VERSION` names a
+release that does not exist (the error shows the URL), or GitHub was not
+reachable. Check the build logs (`scalingo deployment-logs`) and
+https://github.com/php/frankenphp/releases, then retry the deployment. A build
+with a pinned version already in the cache does not need GitHub.
 
 ### Build warns: "vendor/ not found"
 
