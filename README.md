@@ -57,11 +57,13 @@ The buildpack applies when the app root contains both a `Caddyfile` and a
 
 ### `bin/compile`
 
-1. Reads the PHP requirement from `composer.json` (informational, the PHP
-   buildpack is the one installing PHP).
-2. Detects the architecture and libc and installs the pinned FrankenPHP
+1. Detects the architecture and libc and installs the pinned FrankenPHP
    binary to `/app/bin/frankenphp`, from the build cache when that version was
    already downloaded (see [FrankenPHP version](#frankenphp-version)).
+2. Runs Composer's `vendor/composer/platform_check.php` with the PHP embedded
+   in that binary and fails the build if it does not satisfy `composer.json`
+   (see [Build fails: "does not satisfy composer.json"](#build-fails-does-not-satisfy-composerjson)).
+   Warns when that PHP differs from the PHP buildpack's CLI.
 3. Installs Ember to `/app/bin/ember` (unless `EMBER_INSTALL=false`), verifying
    the archive against the release's `checksums.txt`.
 4. Warns if `vendor/autoload.php` is missing (the PHP buildpack did not run or
@@ -132,11 +134,11 @@ validate on an older local install.
 ## FrankenPHP version
 
 The binary version is pinned: a build never picks up a new FrankenPHP release
-on its own. The default is the version tested with this buildpack (`1.13.5`);
+on its own. The default is the version tested with this buildpack (`1.13.6`, embedding PHP 8.5.13);
 set `FRANKENPHP_VERSION` on the app to choose another one:
 
 ```bash
-scalingo env-set FRANKENPHP_VERSION=1.13.5   # or v1.13.5
+scalingo env-set FRANKENPHP_VERSION=1.13.6   # or v1.13.6
 scalingo env-set FRANKENPHP_VERSION=latest   # follow the newest release, unpinned
 ```
 
@@ -147,7 +149,10 @@ next builds skip the ~175 MB download; `latest` is downloaded at every build.
 The release ships its own PHP (8.5 for the 1.13 series), independent of the PHP
 CLI the PHP buildpack installs from `composer.json`: the web runs FrankenPHP's
 PHP, `scalingo run` and the build run the buildpack's. Check both with
-`frankenphp version` and `php -v`.
+`frankenphp version` and `php -v`. The build checks the embedded PHP against
+`composer.json` and fails on a mismatch: pinning `"php": "8.5.13"` requires a
+FrankenPHP release embedding PHP 8.5.13 or later (1.13.6, not 1.13.5 which
+embeds 8.5.12).
 
 ### Custom PHP configuration
 
@@ -523,6 +528,16 @@ release that does not exist (the error shows the URL), or GitHub was not
 reachable. Check the build logs (`scalingo deployment-logs`) and
 https://github.com/php/frankenphp/releases, then retry the deployment. A build
 with a pinned version already in the cache does not need GitHub.
+
+### Build fails: "does not satisfy composer.json"
+
+The PHP embedded in the FrankenPHP binary does not meet a `composer.json`
+requirement (`require.php`, and the `ext-*` ones when Composer's
+`platform-check` is `true`). Without this check the build succeeds and every
+worker dies at boot on `Composer detected issues in your platform`. Set
+`FRANKENPHP_VERSION` to a release embedding a matching PHP (its release notes
+list it), or relax the requirement. `FRANKENPHP_SKIP_PLATFORM_CHECK=true` skips
+the check.
 
 ### Build warns: "vendor/ not found"
 
