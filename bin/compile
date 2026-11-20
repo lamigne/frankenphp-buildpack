@@ -10,26 +10,6 @@ cd "$BUILD_DIR"
 echo "-----> FrankenPHP Buildpack"
 echo "-----> Installing FrankenPHP and dependencies..."
 
-# Parse composer.json for PHP version
-PHP_VERSION="8.5"
-if [ -f "composer.json" ]; then
-    # Try jq first, fall back to grep
-    if command -v jq >/dev/null 2>&1; then
-        php_requirement=$(jq -r '.require.php // empty' composer.json 2>/dev/null)
-    else
-        php_requirement=$(grep -o '"php"[[:space:]]*:[[:space:]]*"[^"]*' composer.json 2>/dev/null | head -1 | grep -o '"[^"]*"$' | tr -d '"')
-    fi
-
-    if [ ! -z "$php_requirement" ]; then
-        extracted_version=$(echo "$php_requirement" | grep -oE '[89]\.[0-9]+' | head -1)
-        if [ ! -z "$extracted_version" ]; then
-            PHP_VERSION="$extracted_version"
-        fi
-    fi
-fi
-
-echo "-----> Detected PHP version requirement: $PHP_VERSION"
-
 # Architecture
 ARCH=$(uname -m)
 if [ "$ARCH" != "x86_64" ] && [ "$ARCH" != "aarch64" ]; then
@@ -47,8 +27,8 @@ INSTALL_DIR="$BUILD_DIR/bin"
 mkdir -p "$INSTALL_DIR"
 
 # FrankenPHP version: pinned, so a build never picks up a new release unannounced. Override with
-# FRANKENPHP_VERSION (e.g. 1.13.5, with or without the leading "v"); "latest" follows the newest release.
-FRANKENPHP_DEFAULT_VERSION="1.13.5"
+# FRANKENPHP_VERSION (e.g. 1.13.6, with or without the leading "v"); "latest" follows the newest release.
+FRANKENPHP_DEFAULT_VERSION="1.13.6"
 FRANKENPHP_VERSION="$FRANKENPHP_DEFAULT_VERSION"
 [ -f "$ENV_DIR/FRANKENPHP_VERSION" ] && FRANKENPHP_VERSION=$(tr -d '[:space:]' < "$ENV_DIR/FRANKENPHP_VERSION")
 FRANKENPHP_VERSION="${FRANKENPHP_VERSION#v}"
@@ -89,6 +69,46 @@ fi
 
 chmod +x "$INSTALL_DIR/frankenphp"
 echo "✓ FrankenPHP installed: $("$INSTALL_DIR/frankenphp" version 2>/dev/null | head -1 || echo "${FRANKENPHP_VERSION}")"
+
+# The web runs the PHP embedded in the FrankenPHP binary, not the PHP CLI the PHP buildpack installed from
+# composer.json: a binary embedding an older PHP than composer.json requires builds fine, then every worker dies at
+# boot on Composer's platform check. Run that same check here with the embedded PHP so the build fails instead.
+# FRANKENPHP_SKIP_PLATFORM_CHECK=true skips it.
+FRANKENPHP_SKIP_PLATFORM_CHECK="false"
+[ -f "$ENV_DIR/FRANKENPHP_SKIP_PLATFORM_CHECK" ] && FRANKENPHP_SKIP_PLATFORM_CHECK=$(tr -d '[:space:]' < "$ENV_DIR/FRANKENPHP_SKIP_PLATFORM_CHECK")
+# `frankenphp php-cli` takes no PHP options (-n, -d): only a script or -r.
+EMBEDDED_PHP_VERSION=$("$INSTALL_DIR/frankenphp" php-cli -r 'echo PHP_VERSION;' 2>/dev/null || true)
+PLATFORM_CHECK="$BUILD_DIR/vendor/composer/platform_check.php"
+
+if [ "$FRANKENPHP_SKIP_PLATFORM_CHECK" = "true" ]; then
+    echo "⚠ Warning: Composer platform check skipped (FRANKENPHP_SKIP_PLATFORM_CHECK=true)"
+elif [ -f "$PLATFORM_CHECK" ]; then
+    echo "-----> Checking composer.json platform requirements against FrankenPHP's PHP ${EMBEDDED_PHP_VERSION:-unknown}..."
+    if ! platform_issues=$("$INSTALL_DIR/frankenphp" php-cli "$PLATFORM_CHECK" 2>&1); then
+        echo "ERROR: FrankenPHP ${FRANKENPHP_VERSION} embeds PHP ${EMBEDDED_PHP_VERSION:-unknown}, which does not satisfy composer.json:"
+        # Keep the issues of the RuntimeException message, without its file/line suffix and stack trace.
+        issues=$(echo "$platform_issues" | grep -o 'Composer detected issues in your platform: .*' | head -1 \
+            | sed -e 's/^Composer detected issues in your platform: //' -e 's/ in \/.*:[0-9]*$//')
+        echo "       ${issues:-$platform_issues}"
+        echo "       Every worker would fail at boot. Pick a FrankenPHP release that embeds a matching PHP"
+        echo "       (https://github.com/php/frankenphp/releases) with FRANKENPHP_VERSION, or relax the php requirement."
+        exit 1
+    fi
+    echo "✓ PHP ${EMBEDDED_PHP_VERSION:-unknown} satisfies composer.json"
+else
+    echo "⚠ Warning: vendor/composer/platform_check.php not found, PHP requirements not checked against FrankenPHP's PHP"
+fi
+
+# Same PHP on both sides: the build, cache warmup and `scalingo run` use the PHP buildpack's CLI.
+# The PHP buildpack installs it in /app/vendor/php during the build, shipped as $BUILD_DIR/vendor/php.
+CLI_PHP="/app/vendor/php/bin/php"
+[ -x "$CLI_PHP" ] || CLI_PHP="$BUILD_DIR/vendor/php/bin/php"
+if [ -x "$CLI_PHP" ] && [ -n "$EMBEDDED_PHP_VERSION" ]; then
+    CLI_PHP_VERSION=$("$CLI_PHP" -n -r 'echo PHP_VERSION;' 2>/dev/null || true)
+    if [ -n "$CLI_PHP_VERSION" ] && [ "$CLI_PHP_VERSION" != "$EMBEDDED_PHP_VERSION" ]; then
+        echo "⚠ Warning: the web runs PHP ${EMBEDDED_PHP_VERSION} (FrankenPHP) but the CLI runs PHP ${CLI_PHP_VERSION} (PHP buildpack)"
+    fi
+fi
 
 # Ember: real-time monitoring for Caddy/FrankenPHP (https://github.com/alexandre-daubois/ember).
 # Installed alongside frankenphp so a `tcp` process can run `ember --daemon`
